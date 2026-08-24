@@ -1,7 +1,7 @@
 ---
 name: landing
 description: Start a quota-budgeted coding task with a hard remaining-quota floor and graceful handoff.
-argument-hint: '<floor-percent> -- <task>'
+argument-hint: '[weekly|5h] <percent-left> -- <task>'
 disable-model-invocation: true
 allowed-tools: Bash(landing *)
 ---
@@ -12,11 +12,12 @@ Use Agent Landing for this task. The raw invocation arguments are:
 
 Interpret the invocation as:
 
-- the first numeric argument is the minimum remaining quota floor, in percent;
+- the standalone numeric argument after the optional window is the minimum remaining quota floor, in percent;
 - `--` separates the quota options from the task text;
 - if no quota window is named, use `seven_day`;
 - `5h` or `five_hour` selects the five-hour window;
 - `weekly` or `seven_day` selects the seven-day window.
+- never interpret the `5` inside the `5h` window token as the quota floor.
 
 Examples:
 

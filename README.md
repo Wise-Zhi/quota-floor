@@ -32,6 +32,19 @@ Codex:        $landing 70 -- refactor auth and add tests
 Terminal:      landing status
 ```
 
+Claude Code shows the expected format directly in slash-command autocomplete:
+
+```text
+/landing [weekly|5h] <percent-left> -- <task>
+```
+
+- `weekly` or `5h` selects the quota window; omit it to use `weekly`.
+- `<percent-left>` is the minimum quota that must remain, not the amount to spend.
+- `--` separates the quota settings from the task.
+
+For example: `/landing weekly 75 -- fix the checkout tests`. In Codex, selecting
+`$landing` provides the editable starter `Use $landing weekly 75 -- <task>`.
+
 Users interact with it in three places:
 
 1. **Inside the existing Claude Code or Codex conversation** — invoke `/landing` in Claude Code or `$landing` in Codex. Natural-language budget requests can still be supported, but the explicit command is the discoverable default.

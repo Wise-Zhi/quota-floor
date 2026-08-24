@@ -5,11 +5,12 @@ description: Start a quota-budgeted coding task with a hard remaining-quota floo
 
 Use Agent Landing for this task. Parse the text that followed `$landing` as follows:
 
-- the first numeric argument is the minimum remaining quota floor, in percent;
+- the standalone numeric argument after the optional window is the minimum remaining quota floor, in percent;
 - `--` separates quota options from the task text;
 - if no quota window is named, use `seven_day`;
 - `5h` or `five_hour` selects the five-hour window;
 - `weekly` or `seven_day` selects the seven-day window.
+- never interpret the `5` inside the `5h` window token as the quota floor.
 
 Examples:
 
