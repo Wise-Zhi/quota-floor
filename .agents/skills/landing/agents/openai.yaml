@@ -1,0 +1,6 @@
+interface:
+  display_name: "Agent Landing"
+  short_description: "Run a coding task inside a quota floor"
+  default_prompt: "Use Agent Landing to run this task within a quota floor."
+policy:
+  allow_implicit_invocation: false

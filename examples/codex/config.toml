@@ -1,0 +1,14 @@
+[features]
+hooks = true
+
+[hooks]
+[[hooks.PreToolUse]]
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "landing hook-pre-tool --platform codex"
+statusMessage = "checking task quota budget"
+
+[[hooks.PostToolUse]]
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "landing hook-post-tool --platform codex"
