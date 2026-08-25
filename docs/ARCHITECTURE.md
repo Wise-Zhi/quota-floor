@@ -151,7 +151,7 @@ Entry point for:
 
 A budget belongs to the user, not to one task. Finishing a task must not quietly drop the guard for whatever is asked next, so a completed session starts a **new segment** under the same floor rather than being released.
 
-Only a *new user instruction* may start that segment: `UserPromptSubmit` on Claude Code, `landing resume` elsewhere. A tool call can never do it, because a tool call cannot prove a user asked for anything — allowing that would let the agent work straight past `landing complete`.
+Only a *new user instruction* may start that segment: the `UserPromptSubmit` hook on Claude Code and on Codex, `landing resume` on hosts without one. A tool call can never do it, because a tool call cannot prove a user asked for anything — allowing that would let the agent work straight past `landing complete`.
 
 A session that stopped because quota actually ran out (`landed` or `emergency`) is **not** renewable.
 
@@ -179,6 +179,6 @@ The provider interface is intentionally small: convert provider-specific quota d
 - Claude `rate_limits` requires a Claude.ai subscription and appears only after the first API response of a session; API-key users cannot be guarded.
 - Claude model-specific limits may not all be available through statusLine.
 - Codex hook enforcement depends on host behavior; some current builds have reported deny-path regressions for writes such as `apply_patch`.
-- Codex has no `UserPromptSubmit` equivalent, so segment renewal there is manual.
+- Codex exposes `UserPromptSubmit` as of codex-cli 0.149.0-alpha.4.3, verified via `hooks/list` on its app-server. On builds without it, segment renewal is manual via `landing resume`.
 - Burn-rate runway uses wall-clock intervals and excludes long idle gaps; active-compute time is not yet measured directly.
 - Installer/config merging and real cross-platform integration testing are still pending.

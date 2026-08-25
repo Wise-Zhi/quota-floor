@@ -1,0 +1,43 @@
+{
+  "description": "Agent Landing quota guard",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/abs/path/to/Landing/.venv/bin/python\" -m agent_landing.cli hook-pre-tool --platform codex",
+            "commandWindows": "\"C:/abs/path/to/Landing/.venv/Scripts/python.exe\" -m agent_landing.cli hook-pre-tool --platform codex",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/abs/path/to/Landing/.venv/bin/python\" -m agent_landing.cli hook-post-tool --platform codex",
+            "commandWindows": "\"C:/abs/path/to/Landing/.venv/Scripts/python.exe\" -m agent_landing.cli hook-post-tool --platform codex",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"/abs/path/to/Landing/.venv/bin/python\" -m agent_landing.cli hook-user-prompt --platform codex",
+            "commandWindows": "\"C:/abs/path/to/Landing/.venv/Scripts/python.exe\" -m agent_landing.cli hook-user-prompt --platform codex",
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  }
+}

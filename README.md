@@ -118,7 +118,7 @@ As soon as the task's acceptance criteria are satisfied, the agent runs `landing
 
 A budget belongs to the user, not to one task. Finishing a task must not quietly drop the guard for whatever is asked next, so a completed session starts a **new segment** under the same floor rather than being released.
 
-Only a *new user instruction* may start that segment. On Claude Code this is the `UserPromptSubmit` hook; elsewhere it is `landing resume`. A tool call can never do it, because a tool call cannot prove a user asked for anything — allowing that would let the agent work straight past `landing complete`.
+Only a *new user instruction* may start that segment. Both Claude Code and Codex expose a `UserPromptSubmit` hook for this (verified on codex-cli 0.149.0-alpha.4.3); `landing resume` is the manual fallback for hosts that do not. A tool call can never do it, because a tool call cannot prove a user asked for anything — allowing that would let the agent work straight past `landing complete`.
 
 A session that stopped because quota actually ran out (`landed` or `emergency`) is **not** renewable. Renewing there would defeat the floor.
 

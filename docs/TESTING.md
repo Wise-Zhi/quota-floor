@@ -169,7 +169,7 @@ Validation goals:
 2. The requested `five_hour`/`seven_day` window maps correctly, and `usedPercent` is read as consumed quota.
 3. Stale quota is refreshed before a Codex PreToolUse decision.
 4. The host actually honors deny decisions for the tool paths under test.
-5. `landing resume` starts a new segment, since Codex has no `UserPromptSubmit`.
+5. Segment renewal works: `UserPromptSubmit` where the build has it (0.149+), `landing resume` otherwise.
 
 Because current Codex builds may differ in hook enforcement, record the exact Codex version and whether `apply_patch`/write denial was actually enforced.
 

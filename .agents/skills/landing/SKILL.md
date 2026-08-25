@@ -67,9 +67,9 @@ as a spending target. If the task completes early, immediately run
 to consume the unused allowance.
 
 The budget contract outlives a single task: if the user sends a new instruction
-afterwards, run `landing resume` to start a new segment under the same floor.
-(Codex has no `UserPromptSubmit` hook, so this step is manual there; on Claude
-Code the hook does it automatically.)
+afterwards, a new segment starts under the same floor. Codex does this
+automatically when the `UserPromptSubmit` hook is installed (0.149 and later);
+run `landing resume` by hand on builds or setups without it.
 
 If the user wants the budget itself to end — "stop watching my quota", "forget the
 budget", "cancel that" — run `landing cancel`. That ends the contract and stands

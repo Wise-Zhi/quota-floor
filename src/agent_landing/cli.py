@@ -70,7 +70,21 @@ def _current_snapshot(args: argparse.Namespace, provider: str, store: StateStore
             sampled_at=time(),
         )
     if provider == "codex":
-        snapshot = CodexAppServerProvider(executable=getattr(args, "executable", "codex")).read()
+        executable = getattr(args, "executable", "codex")
+        try:
+            snapshot = CodexAppServerProvider(executable=executable).read()
+        except Exception as error:
+            # A missing `codex` on PATH used to surface as a raw FileNotFoundError
+            # traceback, and the budget was then never created -- which leaves the
+            # session unguarded while looking like a crash rather than a refusal.
+            stored = store.load_snapshot()
+            if stored and stored.provider == provider:
+                return stored
+            raise SystemExit(
+                f"Could not read Codex quota via {executable!r}: {error}\n"
+                "Point at the binary explicitly with --executable /path/to/codex, "
+                "or pass --remaining together with --window for a manual value."
+            )
         store.save_snapshot(snapshot)
         return snapshot
     snapshot = store.load_snapshot()

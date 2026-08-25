@@ -53,9 +53,9 @@ create extra work, tests, refactors, or polish merely to consume the unused
 allowance.
 
 The budget contract outlives one task. When the user sends a new instruction
-afterwards, a new segment starts under the same floor — automatically on Claude
-Code via the `UserPromptSubmit` hook, or manually with `landing resume` on hosts
-that have no equivalent.
+afterwards, a new segment starts under the same floor — automatically wherever
+the host exposes a `UserPromptSubmit` hook (Claude Code, and Codex from
+0.149), or manually with `landing resume` on hosts that have no equivalent.
 
 If the user wants the budget itself to end — "stop watching my quota", "forget the
 budget", "cancel that" — run `landing cancel`. That ends the contract and stands
