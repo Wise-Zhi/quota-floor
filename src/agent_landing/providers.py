@@ -84,6 +84,43 @@ def _codex_window_id(duration_mins: int | None, position: str) -> str:
     return position
 
 
+def parse_codex_rate_limits(result: dict[str, Any]) -> QuotaSnapshot:
+    """Turn an `account/rateLimits/read` result into a snapshot.
+
+    Split out of the provider so it can be pinned against a recorded payload:
+    while this lived inside `read()` it could only be exercised by spawning a
+    real `codex app-server`, which is exactly why the field names went
+    unverified until a live payload was captured by hand.
+    """
+    rate_limits = result.get("rateLimits") or {}
+    windows: list[QuotaWindow] = []
+    unreadable: list[dict[str, str]] = []
+    for position in ("primary", "secondary"):
+        raw = rate_limits.get(position)
+        if not isinstance(raw, dict):
+            continue
+        duration_raw = raw.get("windowDurationMins")
+        window_id = _codex_window_id(
+            int(duration_raw) if duration_raw is not None else None, position
+        )
+        used, problem = read_quota_percent(raw)
+        if used is None:
+            unreadable.append({"id": window_id, "reason": problem or "unreadable quota"})
+            continue
+        windows.append(
+            QuotaWindow(
+                id=window_id,
+                used_percent=used,
+                resets_at=int(raw["resetsAt"]) if raw.get("resetsAt") is not None else None,
+                source="codex-app-server",
+                confidence="high",
+            )
+        )
+    return QuotaSnapshot(
+        provider="codex", windows=windows, sampled_at=time(), unreadable_windows=unreadable
+    )
+
+
 class CodexAppServerProvider:
     """Reads quota without invoking a model turn via Codex app-server JSON-RPC."""
 
@@ -139,30 +176,4 @@ class CodexAppServerProvider:
             except subprocess.TimeoutExpired:
                 proc.kill()
 
-        rate_limits = result.get("rateLimits") or {}
-        windows: list[QuotaWindow] = []
-        unreadable: list[dict[str, str]] = []
-        for position in ("primary", "secondary"):
-            raw = rate_limits.get(position)
-            if not isinstance(raw, dict):
-                continue
-            duration_raw = raw.get("windowDurationMins")
-            window_id = _codex_window_id(
-                int(duration_raw) if duration_raw is not None else None, position
-            )
-            used, problem = read_quota_percent(raw)
-            if used is None:
-                unreadable.append({"id": window_id, "reason": problem or "unreadable quota"})
-                continue
-            windows.append(
-                QuotaWindow(
-                    id=window_id,
-                    used_percent=used,
-                    resets_at=int(raw["resetsAt"]) if raw.get("resetsAt") is not None else None,
-                    source="codex-app-server",
-                    confidence="high",
-                )
-            )
-        return QuotaSnapshot(
-            provider="codex", windows=windows, sampled_at=time(), unreadable_windows=unreadable
-        )
+        return parse_codex_rate_limits(result)
