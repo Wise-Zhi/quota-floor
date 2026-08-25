@@ -117,6 +117,11 @@ def resolve_budget_window(session: TaskSession, snapshot: QuotaSnapshot) -> Quot
     window = snapshot.window(session.window)
     if window:
         return window
+    if any(entry.get("id") == session.window for entry in snapshot.unreadable_windows):
+        # Present but unparseable is not the same as gone. Migrating here would
+        # move the budget onto a window that is usually *more* permissive and
+        # report the result as a known quota, so refuse to read anything instead.
+        return None
     longest = snapshot.longest_window()
     if longest:
         session.window = longest.id
@@ -143,11 +148,21 @@ def evaluate_current(
         decision = unknown_quota_decision(session)
     else:
         age = max(0.0, time() - snapshot.sampled_at)
+        # The floor applies to every window, so `spend N` needs a baseline for
+        # each one. Record it the first time a window is seen under this budget.
+        for seen in snapshot.windows:
+            session.started_remaining_by_window.setdefault(seen.id, seen.remaining_percent)
         others = [
             (w.id, w.remaining_percent) for w in snapshot.windows if w.id != window.id
         ]
         decision = evaluate(
-            session, window.remaining_percent, snapshot_age_seconds=age, other_windows=others
+            session,
+            window.remaining_percent,
+            snapshot_age_seconds=age,
+            other_windows=others,
+            unreadable_windows=[
+                entry.get("id", "unknown") for entry in snapshot.unreadable_windows
+            ],
         )
     session.state = decision.state
     store.save_session(session)

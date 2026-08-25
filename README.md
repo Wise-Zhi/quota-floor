@@ -41,9 +41,8 @@ Claude Code shows the expected format directly in slash-command autocomplete:
 - `leave 70` stops while at least 70% **remains**; `spend 15` spends at most 15
   percentage points. One of the two keywords is **required**: a bare number is
   refused, so that a dropped keyword can never silently mean the opposite.
-- `weekly` or `5h` selects the quota window. Omit it and Agent Landing uses the
-  longest window your plan exposes — weekly where it exists, the five-hour
-  window on plans that only have that one.
+- `weekly` or `5h` **scopes** the floor to one window. Omit it and the floor
+  guards every window your plan exposes, stopping at whichever reaches it first.
 - `--` is optional; the first word that is not a keyword, window, or number
   starts the task.
 - The settings may come **before or after** the task, whichever reads more
@@ -127,14 +126,15 @@ To end the contract itself rather than one task, run `landing cancel`. The guard
 
 ## Quota windows and plans
 
-Plans differ in which windows exist: some accounts expose a weekly window, others only a five-hour one. Users should not have to know which they are on, so omitting the window selects the **longest window the account actually exposes** — the one that hurts most to exhaust. A five-hour window is a rate limit that refills after a nap; a weekly window is the real budget.
+A plan can expose several windows at once. A Codex Plus account reports both a five-hour and a weekly window; Claude Code reports `five_hour` and `seven_day`, either of which may be absent. Users should not have to know which windows they have, so **the floor applies to all of them** and work stops at whichever one reaches it first.
 
-Two rules follow:
+Naming a window scopes the floor to that one instead. That is the escape hatch for "I know the five-hour window is low, budget me against the weekly one" — and it is the only thing the optional `weekly`/`5h` token does.
 
-- The **floor** applies to that budget window.
-- **Landing feasibility** is checked on *every* window. A landing reserve held on the budget window is worthless if a different window cuts the agent off first: once any window is exhausted the handoff cannot be written, however healthy the budget looks.
+**Landing feasibility is checked on every window regardless**, scoped or not. Being able to write a handoff is a safety property, not a preference: once any window is exhausted the handoff cannot be written, however healthy the budget looks.
 
-If the window a session was pinned to disappears — a plan change, or a host that stops reporting it — the budget migrates to the longest window still available. It never silently stops guarding.
+Why the floor is not simply pinned to the longest window: it used to be, on the assumption that a five-hour window is a rate limit that refills after a nap while a weekly window is the real budget. A live Codex Plus payload disproved the premise the design rested on — Plus reports *both* windows. With `leave 70` pinned to the weekly window, the five-hour window burned from 94% to 3% remaining while the guard stayed in NORMAL, because 70% of a week is not reachable inside one session. The floor never bound; only the landing reserve eventually did.
+
+If the window a session was scoped to disappears — a plan change, or a host that stops reporting it — the budget migrates to the longest window still available. A window that is *present but unreadable* is not treated as missing: migrating there would move the floor onto a roomier window and report the result as a known quota, so the guard reports unknown quota and conserves instead.
 
 ## Trusting the quota reading
 
@@ -226,7 +226,7 @@ Bootstrap a fake Claude snapshot for local testing:
 ```bash
 landing start \
   --provider claude \
-  --window auto \
+  --window five_hour \
   --leave 70 \
   --remaining 90 \
   --task "Demo task"

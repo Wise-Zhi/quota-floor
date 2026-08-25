@@ -55,6 +55,15 @@ def cmd_codex_snapshot(args: argparse.Namespace) -> int:
 
 def _current_snapshot(args: argparse.Namespace, provider: str, store: StateStore) -> QuotaSnapshot:
     if args.remaining is not None:
+        if getattr(args, "window", None) in (None, "auto"):
+            # `auto` means "every window this plan exposes", which a single
+            # hand-written number cannot describe. Without this the synthetic
+            # window was literally named "auto" and the budget was pinned to a
+            # window that exists on no plan.
+            raise SystemExit(
+                "--remaining describes one window, so name it: "
+                "--window five_hour or --window seven_day."
+            )
         return QuotaSnapshot(
             provider=provider,
             windows=[QuotaWindow(id=args.window, used_percent=100.0 - args.remaining, source="manual")],
@@ -78,19 +87,46 @@ def _current_snapshot(args: argparse.Namespace, provider: str, store: StateStore
     return snapshot
 
 
+#: Slash-command spelling of each window id, so a refusal can be restated in the
+#: syntax the user actually typed rather than only in CLI flags.
+_WINDOW_WORD = {"five_hour": "5h", "seven_day": "weekly"}
+
+
 def _interpretation(
-    mode: str, floor: float, max_spend: float | None, remaining: float, window: str
+    mode: str,
+    floor: float,
+    max_spend: float | None,
+    remaining: float,
+    window: str,
+    scope_windows: list[str],
 ) -> str:
-    stop_text = (
-        f"will stop while at least {floor:.1f}% of the {window} quota is still REMAINING "
-        f"(currently {remaining:.1f}% remaining)"
-    )
+    """Restate the budget as a REMAINING floor, whichever way the user phrased it.
+
+    Always names the windows the floor covers. A plan can expose more than one,
+    and a floor that silently applied to only one of them was how `leave 70`
+    ended up guarding the window that never binds.
+    """
+    covers_many = len(scope_windows) > 1
+    listed = ", ".join(scope_windows)
     if mode == "max_spend" and max_spend is not None:
         lead = f"Spending at most {max_spend:.1f} percentage points"
+        body = (
+            f"on each of {listed}, measured from where that window stands right now; "
+            f"work stops as soon as any one of them has given up {max_spend:.1f} points"
+            if covers_many
+            else f"of the {window} quota, stopping while at least {floor:.1f}% is still "
+            f"REMAINING (currently {remaining:.1f}%)"
+        )
     else:
         lead = f"Leaving at least {floor:.1f}%"
+        body = (
+            f"REMAINING on every quota window ({listed}); work stops as soon as any one of "
+            f"them reaches {floor:.1f}%"
+            if covers_many
+            else f"REMAINING of the {window} quota (currently {remaining:.1f}%)"
+        )
     return (
-        f"{lead}: {stop_text}. "
+        f"{lead}: {body}. "
         "That floor is a limit, never a spending target -- if the task finishes sooner, "
         "the unused quota is returned to you."
     )
@@ -99,6 +135,8 @@ def _interpretation(
 def cmd_start(args: argparse.Namespace) -> int:
     store = _store(args)
     snapshot = _current_snapshot(args, args.provider, store)
+    # Naming a window scopes the floor to it; `auto` guards every window.
+    floor_everywhere = args.window == "auto"
     if args.window == "auto":
         window = snapshot.longest_window()
         if not window:
@@ -126,6 +164,24 @@ def cmd_start(args: argparse.Namespace) -> int:
     if floor > remaining:
         raise SystemExit(f"Requested floor {floor:.1f}% is above current remaining quota {remaining:.1f}%")
 
+    # The floor is a limit on every window, so a window already at or below it
+    # puts the budget in violation the moment it starts. Refusing here beats
+    # opening a session that immediately demands an emergency landing, and it
+    # surfaces the real situation while it is still free to act on.
+    if floor_everywhere:
+        mode_word = "spend" if mode == "max_spend" else "leave"
+        shown = max_spend if mode == "max_spend" and max_spend is not None else floor
+        breached = [w for w in snapshot.windows if w.remaining_percent <= floor]
+        if breached:
+            detail = ", ".join(f"{w.id} at {w.remaining_percent:.1f}%" for w in breached)
+            raise SystemExit(
+                f"Requested floor {floor:.1f}% has already been reached on {detail}. "
+                "The floor applies to every quota window your plan exposes. Either lower "
+                f"the floor, or scope it to one window: --window {args.window}, or "
+                f"`{mode_word} {_WINDOW_WORD.get(args.window, args.window)} {shown:g}` "
+                "in a /landing invocation."
+            )
+
     config = LandingConfig(
         min_reserve_percent=args.min_reserve,
         default_reserve_percent=args.default_reserve,
@@ -148,10 +204,15 @@ def cmd_start(args: argparse.Namespace) -> int:
         cwd=str(Path(args.cwd or os.getcwd()).resolve()),
         last_remaining_percent=remaining,
         config=config,
+        floor_applies_to_all_windows=floor_everywhere,
+        started_remaining_by_window={
+            w.id: w.remaining_percent for w in snapshot.windows
+        },
     )
     store.save_session(session)
     store.save_snapshot(snapshot)
     decision = evaluate(session, remaining)
+    scope_windows = [w.id for w in snapshot.windows] if floor_everywhere else [args.window]
     print(json.dumps({
         "provider": args.provider,
         "window": args.window,
@@ -161,10 +222,13 @@ def cmd_start(args: argparse.Namespace) -> int:
         "development_stops_near_percent": round(decision.development_floor_percent, 2),
         "handoff": args.handoff,
         "mode": mode,
+        "floor_applies_to": scope_windows,
         # Always restated as a REMAINING floor, whichever way the user phrased it,
         # so "leave" and "spend" can never be silently swapped. Shown before any
         # work starts, so a misunderstanding surfaces while it is still free.
-        "interpretation": _interpretation(mode, floor, max_spend, remaining, args.window),
+        "interpretation": _interpretation(
+            mode, floor, max_spend, remaining, args.window, scope_windows
+        ),
     }, indent=2))
     return 0
 
@@ -464,7 +528,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--window",
         choices=["auto", "five_hour", "seven_day"],
         default="auto",
-        help="quota window the floor applies to; 'auto' picks the longest one the plan exposes",
+        help=(
+            "scope the floor to one window; the default 'auto' applies it to every "
+            "window your plan exposes and stops at whichever reaches it first"
+        ),
     )
     group = p.add_mutually_exclusive_group(required=True)
     # `--leave`/`--spend` match the `/landing leave|spend` wording; the original

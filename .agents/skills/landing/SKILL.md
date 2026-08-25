@@ -45,11 +45,12 @@ $landing (leave|spend) [weekly|5h] <percent> -- <task>
   same request. A trailing group is only recognized when it is complete (a
   keyword plus a number), so a number or the word `leave` occurring inside the
   task text is never mistaken for settings.
-- `weekly` or `5h` is **optional**. Omit it and Agent Landing uses the longest
-  window your plan exposes — weekly where it exists, the five-hour window on
-  plans that only have that one. Landing feasibility is checked on *every*
-  window either way, so the one you did not name can never be silently
-  exhausted. Name it only to put the floor itself on that window.
+- `weekly` or `5h` is **optional** and **scopes** the floor. Omit it and the
+  floor guards every window the plan exposes, stopping at whichever reaches it
+  first — which is what you want, since a plan can expose both at once and the
+  five-hour one is usually what binds inside a session. Name a window only to
+  deliberately exclude the other. Landing feasibility is checked on *every*
+  window either way, so a scoped-out window can never be silently exhausted.
 
 Examples:
 

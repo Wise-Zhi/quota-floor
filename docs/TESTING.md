@@ -173,6 +173,31 @@ Validation goals:
 
 Because current Codex builds may differ in hook enforcement, record the exact Codex version and whether `apply_patch`/write denial was actually enforced.
 
+### Capturing a fresh rate-limit payload
+
+`tests/test_codex_rate_limits_contract.py` pins a payload captured from
+codex-cli 0.149.0-alpha.4.3. Re-capture it when the Codex version moves, since
+the field names are an external contract that no amount of unit testing can
+verify:
+
+```bash
+printf '%s
+' '{"method":"initialize","id":1,"params":{"clientInfo":{"name":"probe","title":"probe","version":"0.1.0"}}}' '{"method":"initialized"}' '{"method":"account/rateLimits/read","id":2}' | codex app-server
+```
+
+Keep the input channel open for a second or two; closing stdin immediately makes
+`app-server` drop the request before answering. Responses are matched by `id`
+because unrelated notifications are interleaved into the stream.
+
+What the last capture established, and what to re-check:
+
+- A **Plus** account reports both windows (`primary` 300 min, `secondary` 10080 min). Do not assume a plan implies a single window — that assumption is what let a floor bind to the window that never binds.
+- The percentage key is `usedPercent`, camelCase and *consumed*. There is no remaining-percent key.
+- `resetsAt` is integer Unix seconds.
+- `rateLimitReachedType`, `spendControlReached`, `individualLimit` and `credits` are reported but not yet consumed by Agent Landing.
+
+If the percentage key is ever absent or renamed, the window is recorded as unreadable rather than dropped, which forces `CONSERVE`. Verify that path rather than assuming the parse succeeded.
+
 ## Dashboard test
 
 ```bash

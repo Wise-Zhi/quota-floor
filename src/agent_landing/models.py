@@ -62,12 +62,13 @@ class QuotaSnapshot:
         return next((w for w in self.windows if w.id == window_id), None)
 
     def longest_window(self) -> QuotaWindow | None:
-        """The window that hurts most to exhaust -- the user's real budget.
+        """The longest window still reported, used when a pinned one disappears.
 
-        Pro accounts have a weekly window; Plus accounts may only have the
-        five-hour one. Picking the longest available window means neither user
-        has to know which plan they are on, and a plan change is absorbed
-        automatically instead of silently leaving the budget unguarded.
+        This is NOT where the floor lives. A Codex Plus account reports both a
+        five-hour and a weekly window, so treating the longest one as "the
+        user's budget" let the five-hour window -- the one that actually binds
+        inside a session -- burn unguarded. The floor applies to every window;
+        this only decides which window a homeless budget re-pins to.
         """
         if not self.windows:
             return None
@@ -145,6 +146,15 @@ class TaskSession:
     # new segment under the same floor rather than releasing the guard.
     segment_count: int = 1
     previous_tasks: list[str] = field(default_factory=list)
+    #: Remaining percent per window when the budget started, so `spend N` means
+    #: "N points off *this* window" on every window rather than only the one the
+    #: session happened to be pinned to.
+    started_remaining_by_window: dict[str, float] = field(default_factory=dict)
+    #: True when the floor guards every window (the `auto` default). Set False by
+    #: naming a window explicitly, which scopes the floor to that one. Landing
+    #: feasibility is still checked on every window either way -- that part is a
+    #: safety property and is deliberately not opt-out-able.
+    floor_applies_to_all_windows: bool = True
 
     @property
     def is_cancelled(self) -> bool:

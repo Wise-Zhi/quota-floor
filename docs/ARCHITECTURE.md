@@ -22,7 +22,7 @@ Runway is advisory only. It must never relax the user's floor or authorize addit
 Defines the provider-neutral data model:
 
 - `QuotaWindow`: one provider quota window, represented as used percent plus reset metadata.
-- `QuotaSnapshot`: a timestamped set of quota windows from one provider, plus `unreadable_windows` describing any window the provider reported but whose value could not be trusted. `longest_window()` returns the budget window.
+- `QuotaSnapshot`: a timestamped set of quota windows from one provider, plus `unreadable_windows` describing any window the provider reported but whose value could not be trusted. `longest_window()` is only used to re-pin a budget whose window disappeared; it is not where the floor lives.
 - `window_minutes()`: ranks windows by duration. A five-hour window is a rate limit that refills; a weekly window is the actual budget.
 - `LandingConfig`: reserve and state-machine parameters, including `landing_tool_calls` and `max_snapshot_age_seconds`. `from_dict` ignores unknown keys so configs written by older versions still load.
 - `TaskSession`: persisted per-task budget state, including `segment_count`, `previous_tasks`, and `tool_calls_since_snapshot`.
@@ -76,9 +76,11 @@ The reserve is priced in tool calls — landing costs reading state, checking gi
 
 Three independent signals are combined by taking the **strictest**, never the most permissive:
 
-1. The budget window against the user's floor.
-2. `landing_feasibility()` on every *other* window. A reserve held on the budget window is worthless if a different window cuts the agent off first: once any window is exhausted the handoff cannot be written, however healthy the budget looks.
+1. `window_pressure()` on every window, each judged against the floor that applies to it. The floor is a limit on *all* windows a plan exposes unless the user scoped it to one, because a plan can expose several at once and the shortest is usually what binds inside a session.
+2. Any window whose quota could not be read. The floor cannot be checked there, and an unreadable window is not an absent one, so it forces `CONSERVE` without claiming the window is exhausted.
 3. Snapshot staleness, which can only tighten `NORMAL` into `CONSERVE`.
+
+`window_floor()` resolves the floor per window. `leave N` is an absolute level and reads the same everywhere; `spend N` is a delta, so it is measured from where *that* window stood when the budget started (`started_remaining_by_window`) — the windows burn at very different rates. A window scoped out by an explicit `--window` gets a floor of `0.0`, which reduces `window_pressure()` to a pure landing-feasibility check: the user owns the floor, but being able to write a handoff is a safety property and is not opt-out-able.
 
 `unknown_quota_decision()` is used when no reading can be trusted at all. It yields `CONSERVE`, never `NORMAL`.
 
@@ -102,7 +104,7 @@ Implements the agent execution gate.
 
 The LAND command allowlist rejects any command carrying shell control characters *before* consulting the allowlist, and then requires a full match. A prefix match alone would let `git status && <any write>` through.
 
-`resolve_budget_window()` migrates a session to the longest available window if the one it was pinned to disappears, rather than silently ceasing to guard.
+`resolve_budget_window()` migrates a session to the longest available window if the one it was pinned to disappears, rather than silently ceasing to guard. A window that is *present but unreadable* is explicitly not treated as missing: migrating there would move the budget onto a roomier window and report the result as a known quota, so the session stays pinned and the decision reports unknown quota instead.
 
 `post_tool()` marks the task stopped once the model-written handoff succeeds, with `stop_reason="landed"`.
 

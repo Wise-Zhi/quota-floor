@@ -30,8 +30,9 @@ about what an invocation means. Syntax:
   percentage points. One of the two is required -- a bare number is refused
   rather than defaulted, so a dropped keyword can never silently invert the
   meaning.
-- Omitting the window selects the longest one the account exposes, so Plus
-  (five-hour only) and Pro (weekly) accounts both work unchanged.
+- Omitting the window applies the floor to every window the account exposes,
+  stopping at whichever reaches it first. Naming one scopes the floor to it.
+  Landing feasibility is checked on every window regardless.
 
 If the command exits non-zero it refused the invocation. Show its message and
 stop: starting work without a budget is worse than refusing, because the user

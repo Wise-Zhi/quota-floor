@@ -1,9 +1,12 @@
 """Plans differ in which quota windows exist, and any window can block landing.
 
-Pro accounts expose a weekly window; Plus accounts may only expose the five-hour
-one. The floor belongs to the budget window (the longest available), but landing
-must stay possible on *every* window -- whichever runs out first is the one that
-makes the handoff impossible.
+A plan can expose several windows at once: a Codex Plus account reports both a
+five-hour and a weekly one. The floor is a limit on *every* window, not only on
+the one the budget was pinned to, and whichever window reaches it first is the
+one that stops the work.
+
+Bands used below, for floor=70 with the default reserve of 4.0:
+NORMAL > 79.0, CONSERVE (74.0, 79.0], LAND (70.75, 74.0], EMERGENCY <= 70.75.
 """
 
 from pathlib import Path
@@ -102,12 +105,20 @@ def test_healthy_budget_window_cannot_mask_an_exhausted_rate_limit(tmp_path):
 
 
 def test_limiting_window_is_named_in_the_decision(tmp_path):
-    """Below the landing reserve but above the emergency margin: land now."""
+    """Inside the reserve above its floor but not yet at it: land now."""
     session = store_with(tmp_path, "seven_day", snapshot(seven_day=91)).load_session()
-    decision = evaluate(session, 91.0, other_windows=[("five_hour", 2.0)])
+    decision = evaluate(session, 91.0, other_windows=[("five_hour", 72.0)])
     assert decision.state == LandingState.LAND
     assert decision.limiting_window == "five_hour"
     assert "five_hour" in decision.reason
+
+
+def test_a_second_window_past_the_floor_is_an_emergency(tmp_path):
+    """Far below the floor is not merely "time to land"; the reserve is gone."""
+    session = store_with(tmp_path, "seven_day", snapshot(seven_day=91)).load_session()
+    decision = evaluate(session, 91.0, other_windows=[("five_hour", 2.0)])
+    assert decision.state == LandingState.EMERGENCY
+    assert decision.limiting_window == "five_hour"
 
 
 def test_second_window_inside_the_emergency_margin_forces_emergency(tmp_path):
@@ -134,7 +145,7 @@ def test_cross_window_check_only_tightens_never_relaxes(tmp_path):
 
 def test_second_window_near_reserve_triggers_conserve(tmp_path):
     session = store_with(tmp_path, "seven_day", snapshot(seven_day=91)).load_session()
-    decision = evaluate(session, 91.0, other_windows=[("five_hour", 7.0)])
+    decision = evaluate(session, 91.0, other_windows=[("five_hour", 76.0)])
     assert decision.state == LandingState.CONSERVE
     assert decision.limiting_window == "five_hour"
 
@@ -165,5 +176,113 @@ def test_blind_statusline_does_not_leave_the_last_good_reading_in_force(tmp_path
     store.save_snapshot(blind)
 
     _, decision = evaluate_current(store)
+    assert decision.quota_known is False
+    assert decision.state == LandingState.CONSERVE
+
+
+# --- the floor is a limit on every window -------------------------------------
+
+def codex_store(tmp_path: Path, **kwargs) -> StateStore:
+    """A Codex Plus session: both windows present, floor on `auto`."""
+    store = StateStore(tmp_path)
+    kwargs.setdefault("floor_percent", 70)
+    session = TaskSession(
+        task="t", provider="codex", window="seven_day",
+        started_remaining_percent=94, cwd=str(tmp_path), **kwargs,
+    )
+    session.started_remaining_by_window = {"five_hour": 94.0, "seven_day": 99.0}
+    store.save_session(session)
+    return store
+
+
+def codex_snapshot(five_hour: float, seven_day: float) -> QuotaSnapshot:
+    return QuotaSnapshot(
+        provider="codex",
+        windows=[
+            QuotaWindow(id="five_hour", used_percent=100 - five_hour),
+            QuotaWindow(id="seven_day", used_percent=100 - seven_day),
+        ],
+        sampled_at=time(),
+    )
+
+
+def test_the_floor_binds_on_whichever_window_reaches_it_first(tmp_path):
+    """`leave 70` on a Plus account must bind on the five-hour window.
+
+    Regression for the live defect found against a real payload: because Plus
+    reports both windows, `auto` pinned the floor to the weekly one, and the
+    five-hour window burned from 94% to 3% remaining while the state stayed
+    NORMAL. The floor never bound; only the landing reserve eventually did.
+    """
+    store = codex_store(tmp_path)
+    store.save_snapshot(codex_snapshot(five_hour=71.0, seven_day=96.0))
+    _, decision = evaluate_current(store)
+    assert decision.state != LandingState.NORMAL
+    assert decision.limiting_window == "five_hour"
+
+
+def test_a_roomy_weekly_window_does_not_buy_headroom_on_the_five_hour_one(tmp_path):
+    store = codex_store(tmp_path)
+    store.save_snapshot(codex_snapshot(five_hour=30.0, seven_day=90.0))
+    _, decision = evaluate_current(store)
+    assert decision.state == LandingState.EMERGENCY
+    assert decision.limiting_window == "five_hour"
+
+
+def test_both_windows_above_the_floor_still_work_normally(tmp_path):
+    """The floor is a limit, not a brake: healthy quota must stay unobstructed."""
+    store = codex_store(tmp_path)
+    store.save_snapshot(codex_snapshot(five_hour=94.0, seven_day=99.0))
+    _, decision = evaluate_current(store)
+    assert decision.state == LandingState.NORMAL
+    assert decision.limiting_window is None
+
+
+def test_spend_is_measured_from_each_window_own_starting_point(tmp_path):
+    """`spend 15` means 15 points off *that* window, not off the pinned one.
+
+    The windows burn at very different rates, so measuring every window against
+    the budget window's starting point makes the delta meaningless. five_hour
+    started at 94 -> its floor is 79 (NORMAL above 88); seven_day started at 99
+    -> its floor is 84 (NORMAL above 93). At 90% remaining five_hour is fine on
+    its own baseline, but would read as CONSERVE against seven_day's.
+    """
+    store = codex_store(tmp_path, max_spend_percent=15.0, floor_percent=84.0)
+    store.save_snapshot(codex_snapshot(five_hour=90.0, seven_day=99.0))
+    _, decision = evaluate_current(store)
+    assert decision.state == LandingState.NORMAL
+    assert decision.limiting_window is None
+
+
+# --- an unreadable window is not an absent one --------------------------------
+
+def test_an_unreadable_second_window_forces_conserve(tmp_path):
+    store = codex_store(tmp_path)
+    snap = codex_snapshot(five_hour=94.0, seven_day=99.0)
+    snap.windows = [w for w in snap.windows if w.id != "five_hour"]
+    snap.unreadable_windows = [{"id": "five_hour", "reason": "no recognized field"}]
+    store.save_snapshot(snap)
+    _, decision = evaluate_current(store)
+    assert decision.state == LandingState.CONSERVE
+    assert decision.limiting_window == "five_hour"
+
+
+def test_an_unreadable_budget_window_does_not_migrate_to_a_roomier_one(tmp_path):
+    """Present but unparseable must not be mistaken for "this plan lost a window".
+
+    Migrating here moved the budget onto the weekly window -- almost always the
+    more permissive one -- and reported the result as a known quota.
+    """
+    store = codex_store(tmp_path)
+    session = store.load_session()
+    session.window = "five_hour"
+    store.save_session(session)
+    snap = codex_snapshot(five_hour=94.0, seven_day=99.0)
+    snap.windows = [w for w in snap.windows if w.id != "five_hour"]
+    snap.unreadable_windows = [{"id": "five_hour", "reason": "no recognized field"}]
+    store.save_snapshot(snap)
+
+    session, decision = evaluate_current(store)
+    assert session.window == "five_hour"
     assert decision.quota_known is False
     assert decision.state == LandingState.CONSERVE
