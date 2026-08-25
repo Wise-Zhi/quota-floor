@@ -9,7 +9,8 @@ from time import time
 
 from .dashboard import serve_dashboard
 from .handoff import write_fallback_handoff
-from .hooks import evaluate_current, post_tool, pre_tool
+from .hooks import evaluate_current, post_tool, pre_tool, renew_completed_segment, user_prompt
+from .invocation import parse_invocation
 from .models import LandingConfig, LandingState, QuotaSnapshot, QuotaWindow, TaskSession
 from .policy import evaluate
 from .runway import estimate_runway
@@ -23,6 +24,9 @@ def _store(args: argparse.Namespace) -> StateStore:
 
 def _print_snapshot(snapshot: QuotaSnapshot) -> None:
     parts = [f"{w.id} {w.remaining_percent:.1f}% left" for w in snapshot.windows]
+    # Name unreadable windows rather than letting them vanish: a window that is
+    # silently absent is also a window that is silently unguarded.
+    parts += [f"{entry['id']} quota unreadable" for entry in snapshot.unreadable_windows]
     print(" · ".join(parts) if parts else "quota unavailable")
 
 
@@ -30,7 +34,10 @@ def cmd_claude_statusline(args: argparse.Namespace) -> int:
     payload = json.load(sys.stdin)
     snapshot = parse_claude_statusline(payload)
     store = _store(args)
-    if snapshot.windows:
+    # Persist a reading that is entirely unreadable too. Keeping the previous good
+    # snapshot instead would let the guard keep judging against a number the host
+    # is no longer reporting, with nothing telling the user it had gone blind.
+    if snapshot.windows or snapshot.unreadable_windows:
         store.save_snapshot(snapshot)
     _print_snapshot(snapshot)
     return 0
@@ -60,19 +67,51 @@ def _current_snapshot(args: argparse.Namespace, provider: str, store: StateStore
     snapshot = store.load_snapshot()
     if not snapshot or snapshot.provider != provider:
         raise SystemExit(
-            "No current quota snapshot. For Claude, configure `landing claude-statusline` first; "
-            "for testing you may pass --remaining."
+            "No quota snapshot yet, so there is nothing to budget against.\n"
+            "Claude Code only reports `rate_limits` to the statusLine after the first API "
+            "response of a session, and only for Claude.ai subscriptions, so this is expected "
+            "if the budget is the very first thing requested in a new session.\n"
+            "Send any message first and retry, or verify the statusLine hook with:\n"
+            "  landing claude-statusline < a-saved-statusline-payload.json\n"
+            "For testing you may pass --remaining."
         )
     return snapshot
+
+
+def _interpretation(
+    mode: str, floor: float, max_spend: float | None, remaining: float, window: str
+) -> str:
+    stop_text = (
+        f"will stop while at least {floor:.1f}% of the {window} quota is still REMAINING "
+        f"(currently {remaining:.1f}% remaining)"
+    )
+    if mode == "max_spend" and max_spend is not None:
+        lead = f"Spending at most {max_spend:.1f} percentage points"
+    else:
+        lead = f"Leaving at least {floor:.1f}%"
+    return (
+        f"{lead}: {stop_text}. "
+        "That floor is a limit, never a spending target -- if the task finishes sooner, "
+        "the unused quota is returned to you."
+    )
 
 
 def cmd_start(args: argparse.Namespace) -> int:
     store = _store(args)
     snapshot = _current_snapshot(args, args.provider, store)
-    window = snapshot.window(args.window)
+    if args.window == "auto":
+        window = snapshot.longest_window()
+        if not window:
+            raise SystemExit("No quota windows are available; cannot start a budget.")
+        args.window = window.id
+    else:
+        window = snapshot.window(args.window)
     if not window:
         available = ", ".join(w.id for w in snapshot.windows) or "none"
-        raise SystemExit(f"Quota window {args.window!r} unavailable; available: {available}")
+        raise SystemExit(
+            f"Quota window {args.window!r} unavailable; available: {available}. "
+            "Omit the window to let Agent Landing pick the longest one your plan exposes."
+        )
     remaining = window.remaining_percent
 
     if args.preserve is not None:
@@ -91,10 +130,11 @@ def cmd_start(args: argparse.Namespace) -> int:
         min_reserve_percent=args.min_reserve,
         default_reserve_percent=args.default_reserve,
         max_reserve_percent=args.max_reserve,
-        landing_turns=args.landing_turns,
+        landing_tool_calls=args.landing_tool_calls,
         safety_factor=args.safety_factor,
         conserve_margin_percent=args.conserve_margin,
         emergency_margin_percent=args.emergency_margin,
+        max_snapshot_age_seconds=args.max_snapshot_age_seconds,
     )
     session = TaskSession(
         task=args.task,
@@ -120,8 +160,33 @@ def cmd_start(args: argparse.Namespace) -> int:
         "initial_landing_reserve_percent": round(decision.reserve_percent, 2),
         "development_stops_near_percent": round(decision.development_floor_percent, 2),
         "handoff": args.handoff,
+        "mode": mode,
+        # Always restated as a REMAINING floor, whichever way the user phrased it,
+        # so "leave" and "spend" can never be silently swapped. Shown before any
+        # work starts, so a misunderstanding surfaces while it is still free.
+        "interpretation": _interpretation(mode, floor, max_spend, remaining, args.window),
     }, indent=2))
     return 0
+
+
+def cmd_invoke(args: argparse.Namespace) -> int:
+    """Single entry point for `/landing` (Claude) and `$landing` (Codex).
+
+    Both hosts call this with the raw argument string, so the two syntaxes cannot
+    drift apart and a user cannot learn one and be burned by the other.
+    """
+    parsed = parse_invocation(args.arguments)
+    if not parsed.ok:
+        # Refuse rather than guess: silently starting work without a budget, or
+        # with a misread floor, is worse than not starting at all.
+        print(parsed.message(), file=sys.stderr)
+        print(json.dumps(parsed.to_dict(), indent=2))
+        return 2
+    args.window = parsed.window
+    args.preserve = parsed.percent if parsed.means_leave else None
+    args.max_spend = None if parsed.means_leave else parsed.percent
+    args.task = parsed.task
+    return cmd_start(args)
 
 
 def _refresh_codex_if_needed(store: StateStore, max_age: float, executable: str) -> None:
@@ -140,7 +205,7 @@ def _refresh_codex_if_needed(store: StateStore, max_age: float, executable: str)
 def cmd_hook_pre(args: argparse.Namespace) -> int:
     store = _store(args)
     if args.platform == "codex":
-        _refresh_codex_if_needed(store, args.max_snapshot_age, args.executable)
+        _refresh_codex_if_needed(store, args.refresh_after_seconds, args.executable)
     payload = json.load(sys.stdin)
     print(json.dumps(pre_tool(payload, store), separators=(",", ":")))
     return 0
@@ -153,6 +218,35 @@ def cmd_hook_post(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_hook_user_prompt(args: argparse.Namespace) -> int:
+    store = _store(args)
+    payload = json.load(sys.stdin)
+    print(json.dumps(user_prompt(payload, store), separators=(",", ":")))
+    return 0
+
+
+def cmd_resume(args: argparse.Namespace) -> int:
+    """Manual equivalent of the UserPromptSubmit hook, for hosts that lack one."""
+    store = _store(args)
+    session = store.load_session()
+    if not session:
+        raise SystemExit("No quota-budgeted task to resume.")
+    if not renew_completed_segment(session):
+        raise SystemExit(
+            f"Session is {session.state.value} (reason: {session.stop_reason or 'n/a'}) and is not "
+            "renewable. Only a task that finished early can start a new segment; a landed or "
+            "emergency stop means the quota itself ran out. Start a new budget explicitly."
+        )
+    store.save_session(session)
+    print(json.dumps({
+        "state": session.state.value,
+        "segment": session.segment_count,
+        "floor_percent": session.floor_percent,
+        "message": "New task segment started under the existing floor.",
+    }, indent=2))
+    return 0
+
+
 def _compact_status_line(session: TaskSession, decision, runway) -> str:
     headroom = max(0.0, decision.remaining_percent - decision.development_floor_percent)
     window = "5H" if session.window == "five_hour" else "W" if session.window == "seven_day" else session.window
@@ -160,16 +254,38 @@ def _compact_status_line(session: TaskSession, decision, runway) -> str:
     if runway.available and runway.recent_runway_hours is not None:
         hours = runway.recent_runway_hours
         runway_text = f"~{hours:.1f}h" if hours >= 1 else f"~{round(hours * 60)}m"
-    return (
+    line = (
         f"AL | {window} {decision.remaining_percent:.1f}->{decision.floor_percent:.1f}% "
         f"| safe +{headroom:.1f}% | {decision.state.value.upper()} | runway {runway_text}"
     )
+    if not decision.quota_known:
+        return line + " | QUOTA UNKNOWN"
+    if decision.limiting_window:
+        # Say which window forced the state, or the numbers above look wrong.
+        return line + f" | limited by {decision.limiting_window}"
+    return line
 
 
 def cmd_status(args: argparse.Namespace) -> int:
     store = _store(args)
     current = evaluate_current(store)
     if not current:
+        # A cancelled session is deliberately invisible to the gate, but the user
+        # asking for status deserves to be told the guard is standing down rather
+        # than that nothing exists.
+        session = store.load_session()
+        if session and session.is_cancelled:
+            if getattr(args, "compact", False):
+                print("AL | budget cancelled | not guarding")
+            else:
+                print(json.dumps({
+                    "state": "cancelled",
+                    "task": session.task,
+                    "segments_completed": session.segment_count,
+                    "previous_floor_percent": session.floor_percent,
+                    "message": "Quota budget cancelled; tool use is unrestricted. Start a new budget to be guarded.",
+                }, indent=2))
+            return 0
         print("No active task with a usable quota snapshot.")
         return 1
     session, decision = current
@@ -177,10 +293,20 @@ def cmd_status(args: argparse.Namespace) -> int:
     if getattr(args, "compact", False):
         print(_compact_status_line(session, decision, runway))
         return 0
+    snapshot = store.load_snapshot()
+    other_windows = {
+        w.id: round(w.remaining_percent, 2)
+        for w in (snapshot.windows if snapshot else [])
+        if w.id != session.window
+    }
     payload = {
         "task": session.task,
         "provider": session.provider,
         "window": session.window,
+        "quota_known": decision.quota_known,
+        "other_windows_remaining_percent": other_windows,
+        "unreadable_windows": snapshot.unreadable_windows if snapshot else [],
+        "limiting_window": decision.limiting_window,
         "state": decision.state.value,
         "remaining_percent": round(decision.remaining_percent, 2),
         "final_floor_percent": round(decision.floor_percent, 2),
@@ -189,7 +315,9 @@ def cmd_status(args: argparse.Namespace) -> int:
         "safe_development_headroom_percent": round(
             max(0.0, decision.remaining_percent - decision.development_floor_percent), 2
         ),
-        "recent_burn_samples": session.burn_samples[-8:],
+        "recent_burn_samples_per_tool_call": session.burn_samples[-8:],
+        "segment": session.segment_count,
+        "previous_tasks": session.previous_tasks,
         "runway": runway.to_dict(),
         "handoff": session.handoff_path,
     }
@@ -217,9 +345,39 @@ def cmd_complete(args: argparse.Namespace) -> int:
         "reason": "task_complete",
         "remaining_percent": remaining,
         "floor_percent": session.floor_percent,
-        "message": "Task completed. The quota floor is a limit, not a spending target; no further work is allowed.",
+        "segment": session.segment_count,
+        "message": (
+            "Task completed. The quota floor is a limit, not a spending target; no further work is "
+            "allowed on this task. The budget contract stays in force: a new instruction starts a new "
+            f"segment under the same {session.floor_percent:.1f}% floor."
+        ),
     }, indent=2))
     return 0
+
+def cmd_cancel(args: argparse.Namespace) -> int:
+    """End the budget contract entirely and stand the guard down."""
+    store = _store(args)
+    session = store.load_session()
+    if not session:
+        raise SystemExit("No quota-budgeted task to cancel.")
+    if session.is_cancelled:
+        print(json.dumps({"state": "cancelled", "message": "Budget was already cancelled."}, indent=2))
+        return 0
+    session.state = LandingState.STOPPED
+    session.stop_reason = "cancelled"
+    store.save_session(session)
+    print(json.dumps({
+        "state": "cancelled",
+        "segments_completed": session.segment_count,
+        "floor_percent": session.floor_percent,
+        "message": (
+            "Quota budget cancelled. The guard no longer restricts tool use, and a new "
+            f"instruction will NOT restart the {session.floor_percent:.1f}% floor. "
+            "Start a new budget to be guarded again."
+        ),
+    }, indent=2))
+    return 0
+
 
 def cmd_fallback(args: argparse.Namespace) -> int:
     store = _store(args)
@@ -239,11 +397,15 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 
 def cmd_simulate(args: argparse.Namespace) -> int:
     config = LandingConfig()
+    if args.max_spend is not None:
+        floor = max(0.0, args.start - args.max_spend)
+    else:
+        floor = 70.0 if args.preserve is None else args.preserve
     session = TaskSession(
         task="demo",
         provider="demo",
         window="seven_day",
-        floor_percent=args.preserve,
+        floor_percent=floor,
         started_remaining_percent=args.start,
         config=config,
     )
@@ -251,11 +413,36 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     session.burn_samples = samples
     remaining = args.start
     print("remaining\tstate\treserve\tdev_floor")
-    while remaining >= max(0, args.preserve - 1):
+    while remaining >= max(0, floor - 1):
         decision = evaluate(session, remaining)
         print(f"{remaining:6.1f}%\t{decision.state.value:9s}\t{decision.reserve_percent:5.1f}%\t{decision.development_floor_percent:5.1f}%")
         remaining -= args.step
     return 0
+
+
+def _add_budget_tuning_args(p: argparse.ArgumentParser) -> None:
+    """Shared by `start` and `invoke` so the two cannot diverge."""
+    p.add_argument("--handoff", default="AGENT_HANDOFF.md")
+    p.add_argument("--remaining", type=float, help="manual quota value for testing/bootstrap")
+    p.add_argument("--executable", default="codex")
+    p.add_argument("--min-reserve", type=float, default=3.0)
+    p.add_argument("--default-reserve", type=float, default=4.0)
+    p.add_argument("--max-reserve", type=float, default=15.0)
+    p.add_argument(
+        "--landing-tool-calls",
+        type=int,
+        default=8,
+        help="tool calls the landing sequence is expected to need (reserve is priced per tool call)",
+    )
+    p.add_argument("--safety-factor", type=float, default=1.5)
+    p.add_argument("--conserve-margin", type=float, default=5.0)
+    p.add_argument("--emergency-margin", type=float, default=0.75)
+    p.add_argument(
+        "--max-snapshot-age-seconds",
+        type=float,
+        default=900.0,
+        help="a quota snapshot older than this is not trusted as current headroom",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -273,26 +460,48 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("start", help="start a quota-budgeted task")
     p.add_argument("--provider", choices=["claude", "codex"], required=True)
-    p.add_argument("--window", choices=["five_hour", "seven_day"], default="seven_day")
+    p.add_argument(
+        "--window",
+        choices=["auto", "five_hour", "seven_day"],
+        default="auto",
+        help="quota window the floor applies to; 'auto' picks the longest one the plan exposes",
+    )
     group = p.add_mutually_exclusive_group(required=True)
-    group.add_argument("--preserve", type=float, help="minimum quota percentage to leave after landing")
-    group.add_argument("--max-spend", type=float, help="maximum percentage points this task may spend")
+    # `--leave`/`--spend` match the `/landing leave|spend` wording; the original
+    # names stay as aliases so existing scripts keep working.
+    group.add_argument(
+        "--leave", "--preserve", dest="preserve", type=float,
+        help="minimum quota percentage that must remain after landing",
+    )
+    group.add_argument(
+        "--spend", "--max-spend", dest="max_spend", type=float,
+        help="maximum percentage points this task may spend",
+    )
     p.add_argument("--task", required=True)
-    p.add_argument("--handoff", default="AGENT_HANDOFF.md")
-    p.add_argument("--remaining", type=float, help="manual quota value for testing/bootstrap")
-    p.add_argument("--executable", default="codex")
-    p.add_argument("--min-reserve", type=float, default=3.0)
-    p.add_argument("--default-reserve", type=float, default=4.0)
-    p.add_argument("--max-reserve", type=float, default=15.0)
-    p.add_argument("--landing-turns", type=int, default=3)
-    p.add_argument("--safety-factor", type=float, default=1.5)
-    p.add_argument("--conserve-margin", type=float, default=5.0)
-    p.add_argument("--emergency-margin", type=float, default=0.75)
+    _add_budget_tuning_args(p)
     p.set_defaults(func=cmd_start)
+
+    p = sub.add_parser(
+        "invoke",
+        help="parse a raw /landing or $landing invocation and start the budget (refuses on typos)",
+    )
+    p.add_argument("arguments", help="the raw argument string, e.g. \"weekly 70 -- fix the tests\"")
+    p.add_argument("--provider", choices=["claude", "codex"], required=True)
+    _add_budget_tuning_args(p)
+    p.set_defaults(func=cmd_invoke)
 
     p = sub.add_parser("hook-pre-tool", help="PreToolUse gate for Claude Code or Codex")
     p.add_argument("--platform", choices=["claude", "codex"], required=True)
-    p.add_argument("--max-snapshot-age", type=float, default=20.0)
+    p.add_argument(
+        "--refresh-after-seconds",
+        type=float,
+        default=20.0,
+        help=(
+            "re-read Codex quota when the snapshot is older than this. Distinct from "
+            "`start --max-snapshot-age-seconds`, which decides when a snapshot stops "
+            "being trusted at all."
+        ),
+    )
     p.add_argument("--executable", default="codex")
     p.set_defaults(func=cmd_hook_pre)
 
@@ -300,12 +509,37 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--platform", choices=["claude", "codex"], required=True)
     p.set_defaults(func=cmd_hook_post)
 
+    p = sub.add_parser(
+        "hook-user-prompt",
+        help="UserPromptSubmit gate: a new user instruction starts a new segment under the same floor",
+    )
+    p.add_argument("--platform", choices=["claude", "codex"], required=True)
+    p.set_defaults(func=cmd_hook_user_prompt)
+
+    p = sub.add_parser(
+        "resume",
+        help="start a new task segment under the existing floor (manual UserPromptSubmit equivalent)",
+    )
+    p.set_defaults(func=cmd_resume)
+
     p = sub.add_parser("status", help="show the current budget decision and observed burn-rate runway")
     p.add_argument("--compact", action="store_true", help="print a one-line terminal/statusline view")
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("complete", help="stop immediately because the task finished before the budget floor")
+    p = sub.add_parser(
+        "complete",
+        help=(
+            "end the current task because it finished before the floor; the budget stays "
+            "in force and a new instruction starts a new segment"
+        ),
+    )
     p.set_defaults(func=cmd_complete)
+
+    p = sub.add_parser(
+        "cancel",
+        help="end the budget contract entirely and stop guarding (use `complete` to end just the task)",
+    )
+    p.set_defaults(func=cmd_cancel)
 
     p = sub.add_parser("fallback-handoff", help="write a no-model-call emergency handoff")
     p.set_defaults(func=cmd_fallback)
@@ -317,7 +551,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("simulate", help="simulate the landing state machine")
     p.add_argument("--start", type=float, default=100.0)
-    p.add_argument("--preserve", type=float, default=70.0)
+    group = p.add_mutually_exclusive_group()
+    group.add_argument("--leave", "--preserve", dest="preserve", type=float, default=None)
+    group.add_argument("--spend", "--max-spend", dest="max_spend", type=float, default=None)
     p.add_argument("--burn", default="0.5,0.7,0.6")
     p.add_argument("--step", type=float, default=2.0)
     p.set_defaults(func=cmd_simulate)
