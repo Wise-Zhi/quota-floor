@@ -8,22 +8,70 @@ from typing import Any
 from .models import QuotaSnapshot, QuotaWindow
 
 
+_USED_KEYS = ("used_percentage", "usedPercent", "used_percent")
+_REMAINING_KEYS = ("remaining_percentage", "remainingPercent", "remaining_percent", "percent_left")
+
+
+def read_quota_percent(raw: dict[str, Any]) -> tuple[float | None, str | None]:
+    """Normalize a provider payload to *used* percent, the one internal unit.
+
+    Polarity is decided by the field NAME and never by the value: "30" is
+    identical whether it means 30% spent or 30% left, so a payload whose polarity
+    cannot be established is reported as unknown rather than guessed. Unknown is
+    not 100% available.
+
+    Returns ``(used_percent, problem)``. When the value cannot be trusted the
+    problem string explains why, so the window can be reported as unreadable
+    instead of silently vanishing -- a window that disappears without explanation
+    also silently drops its landing-feasibility check.
+    """
+    used = next((raw[key] for key in _USED_KEYS if raw.get(key) is not None), None)
+    remaining = next((raw[key] for key in _REMAINING_KEYS if raw.get(key) is not None), None)
+
+    if used is not None and remaining is not None:
+        # Both polarities present: they must be complements, or the payload is
+        # internally inconsistent and must not be trusted in either direction.
+        if abs((float(used) + float(remaining)) - 100.0) > 1.0:
+            return None, (
+                f"contradictory quota fields (used {float(used):g}% and "
+                f"remaining {float(remaining):g}% do not add up to 100%)"
+            )
+        return float(used), None
+    if used is not None:
+        return float(used), None
+    if remaining is not None:
+        return 100.0 - float(remaining), None
+    return None, "no recognized used/remaining percentage field"
+
+
+def used_percent_from(raw: dict[str, Any]) -> float | None:
+    return read_quota_percent(raw)[0]
+
+
 def parse_claude_statusline(payload: dict[str, Any]) -> QuotaSnapshot:
     rate_limits = payload.get("rate_limits") or {}
     windows: list[QuotaWindow] = []
+    unreadable: list[dict[str, str]] = []
     for window_id, raw in rate_limits.items():
-        if not isinstance(raw, dict) or "used_percentage" not in raw:
+        if not isinstance(raw, dict):
+            unreadable.append({"id": str(window_id), "reason": "quota entry was not an object"})
+            continue
+        used, problem = read_quota_percent(raw)
+        if used is None:
+            unreadable.append({"id": str(window_id), "reason": problem or "unreadable quota"})
             continue
         windows.append(
             QuotaWindow(
                 id=window_id,
-                used_percent=float(raw["used_percentage"]),
+                used_percent=used,
                 resets_at=int(raw["resets_at"]) if raw.get("resets_at") is not None else None,
                 source="claude-statusline",
                 confidence="high",
             )
         )
-    return QuotaSnapshot(provider="claude", windows=windows, sampled_at=time())
+    return QuotaSnapshot(
+        provider="claude", windows=windows, sampled_at=time(), unreadable_windows=unreadable
+    )
 
 
 def _codex_window_id(duration_mins: int | None, position: str) -> str:
@@ -93,18 +141,28 @@ class CodexAppServerProvider:
 
         rate_limits = result.get("rateLimits") or {}
         windows: list[QuotaWindow] = []
+        unreadable: list[dict[str, str]] = []
         for position in ("primary", "secondary"):
             raw = rate_limits.get(position)
-            if not isinstance(raw, dict) or raw.get("usedPercent") is None:
+            if not isinstance(raw, dict):
                 continue
-            duration = raw.get("windowDurationMins")
+            duration_raw = raw.get("windowDurationMins")
+            window_id = _codex_window_id(
+                int(duration_raw) if duration_raw is not None else None, position
+            )
+            used, problem = read_quota_percent(raw)
+            if used is None:
+                unreadable.append({"id": window_id, "reason": problem or "unreadable quota"})
+                continue
             windows.append(
                 QuotaWindow(
-                    id=_codex_window_id(int(duration) if duration is not None else None, position),
-                    used_percent=float(raw["usedPercent"]),
+                    id=window_id,
+                    used_percent=used,
                     resets_at=int(raw["resetsAt"]) if raw.get("resetsAt") is not None else None,
                     source="codex-app-server",
                     confidence="high",
                 )
             )
-        return QuotaSnapshot(provider="codex", windows=windows, sampled_at=time())
+        return QuotaSnapshot(
+            provider="codex", windows=windows, sampled_at=time(), unreadable_windows=unreadable
+        )

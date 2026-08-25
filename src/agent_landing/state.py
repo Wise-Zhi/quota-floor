@@ -39,13 +39,27 @@ class StateStore:
         if not window:
             return
         remaining = window.remaining_percent
-        if session.last_remaining_percent is not None:
-            burn = session.last_remaining_percent - remaining
-            # Ignore resets/increases and microscopic reporting noise.
-            if 0.01 <= burn <= 25.0:
-                session.burn_samples.append(round(burn, 4))
+        previous = session.last_remaining_percent
+        calls = session.tool_calls_since_snapshot
+        if previous is None:
+            session.last_remaining_percent = remaining
+        else:
+            burn = previous - remaining
+            if burn < 0 or burn > 25.0:
+                # Quota reset, increase, or an implausible jump: restart accounting
+                # rather than feeding a garbage sample into the reserve estimate.
+                session.tool_calls_since_snapshot = 0
+                session.last_remaining_percent = remaining
+            elif burn >= 0.01 and calls > 0:
+                # Normalize to quota burned *per tool call*. Sampling per snapshot
+                # interval would make the reserve drift with the host's refresh rate.
+                session.burn_samples.append(round(burn / calls, 4))
                 session.burn_samples = session.burn_samples[-24:]
-        session.last_remaining_percent = remaining
+                session.tool_calls_since_snapshot = 0
+                session.last_remaining_percent = remaining
+            # Otherwise the movement is too small to attribute yet: keep the same
+            # baseline and keep counting calls so the eventual per-call rate is
+            # divided by the true number of calls that produced it.
         self.save_session(session)
 
 
