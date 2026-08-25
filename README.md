@@ -27,23 +27,36 @@ Example: the user says **"implement OAuth, but leave me 70% weekly quota."** If 
 Landing should feel native to the coding agent. There is no required standalone app. The primary entrypoint is simply **`landing`**:
 
 ```text
-Claude Code:  /landing 70 -- refactor auth and add tests
-Codex:        $landing 70 -- refactor auth and add tests
+Claude Code:  /landing leave 70 -- refactor auth and add tests
+Codex:        $landing leave 70 -- refactor auth and add tests
 Terminal:      landing status
 ```
 
 Claude Code shows the expected format directly in slash-command autocomplete:
 
 ```text
-/landing [weekly|5h] <percent-left> -- <task>
+/landing (leave|spend) [weekly|5h] <percent> -- <task>
 ```
 
-- `weekly` or `5h` selects the quota window; omit it to use `weekly`.
-- `<percent-left>` is the minimum quota that must remain, not the amount to spend.
-- `--` separates the quota settings from the task.
+- `leave 70` stops while at least 70% **remains**; `spend 15` spends at most 15
+  percentage points. One of the two keywords is **required**: a bare number is
+  refused, so that a dropped keyword can never silently mean the opposite.
+- `weekly` or `5h` selects the quota window. Omit it and Agent Landing uses the
+  longest window your plan exposes — weekly where it exists, the five-hour
+  window on plans that only have that one.
+- `--` is optional; the first word that is not a keyword, window, or number
+  starts the task.
+- The settings may come **before or after** the task, whichever reads more
+  naturally: `leave 70 -- fix the tests` and `fix the tests leave 70` are the
+  same request. A trailing group is only recognized when it is complete (a
+  keyword plus a number), so a number or the word `leave` occurring inside the
+  task text is never mistaken for settings.
 
-For example: `/landing weekly 75 -- fix the checkout tests`. In Codex, selecting
-`$landing` provides the editable starter `Use $landing weekly 75 -- <task>`.
+For example: `/landing leave 75 -- fix the checkout tests`. In Codex, selecting
+`$landing` provides the editable starter `Use $landing leave 75 -- <task>`.
+
+Invocations are parsed by `landing invoke`, not by the model, so both hosts agree
+and a typo is refused instead of silently starting an unguarded task.
 
 Users interact with it in three places:
 
@@ -58,8 +71,8 @@ A future installer should print this once after setup:
 ```text
 Landing is ready.
 Use it where you already work:
-  Claude Code:  /landing 70 -- <task>
-  Codex:        $landing 70 -- <task>
+  Claude Code:  /landing leave 70 -- <task>
+  Codex:        $landing leave 70 -- <task>
   Quick check:  landing status --compact
   Full status:  landing status
 ```
@@ -72,19 +85,19 @@ Two equivalent budget modes are supported:
 # Leave at least 70% after the task lands
 landing start \
   --provider claude \
-  --window seven_day \
-  --preserve 70 \
+  --window auto \
+  --leave 70 \
   --task "Implement OAuth refresh"
 
 # Spend at most 15 percentage points from the current quota
 landing start \
   --provider codex \
-  --window seven_day \
-  --max-spend 15 \
+  --window auto \
+  --spend 15 \
   --task "Refactor the authentication layer"
 ```
 
-The intended AI UX is explicit and short: use `/landing` in Claude Code or `$landing` in Codex. For example: `/landing weekly 70 -- implement OAuth refresh`. The skill translates that into the provider-neutral budget command before implementation.
+The intended AI UX is explicit and short: use `/landing` in Claude Code or `$landing` in Codex. For example: `/landing leave 70 -- implement OAuth refresh`. The skill translates that into the provider-neutral budget command before implementation.
 
 ## States
 
@@ -101,6 +114,33 @@ The strongest rule in the project is:
 > **A quota floor is a limit, never a target.**
 
 As soon as the task's acceptance criteria are satisfied, the agent runs `landing complete`. The session becomes `STOPPED` immediately, even if a large amount of the budget was unused. The remaining allowance is returned to the user; it is never treated as quota that should be spent.
+
+### The budget outlives the task
+
+A budget belongs to the user, not to one task. Finishing a task must not quietly drop the guard for whatever is asked next, so a completed session starts a **new segment** under the same floor rather than being released.
+
+Only a *new user instruction* may start that segment. On Claude Code this is the `UserPromptSubmit` hook; elsewhere it is `landing resume`. A tool call can never do it, because a tool call cannot prove a user asked for anything — allowing that would let the agent work straight past `landing complete`.
+
+A session that stopped because quota actually ran out (`landed` or `emergency`) is **not** renewable. Renewing there would defeat the floor.
+
+To end the contract itself rather than one task, run `landing cancel`. The guard stands down, later instructions do not restart the floor, and the session is kept on disk so its burn history remains useful to the next budget.
+
+## Quota windows and plans
+
+Plans differ in which windows exist: some accounts expose a weekly window, others only a five-hour one. Users should not have to know which they are on, so omitting the window selects the **longest window the account actually exposes** — the one that hurts most to exhaust. A five-hour window is a rate limit that refills after a nap; a weekly window is the real budget.
+
+Two rules follow:
+
+- The **floor** applies to that budget window.
+- **Landing feasibility** is checked on *every* window. A landing reserve held on the budget window is worthless if a different window cuts the agent off first: once any window is exhausted the handoff cannot be written, however healthy the budget looks.
+
+If the window a session was pinned to disappears — a plan change, or a host that stops reporting it — the budget migrates to the longest window still available. It never silently stops guarding.
+
+## Trusting the quota reading
+
+Used and remaining are the same number: `30` is identical whether it means 30% spent or 30% left. Polarity is therefore decided by the **field name** and never inferred from the value. A payload whose polarity cannot be established is reported as unreadable rather than guessed.
+
+Unreadable windows are named in `landing status` and the statusline instead of vanishing, because a window that disappears without explanation is also a window that is silently unguarded. When no window can be read at all, the state becomes `CONSERVE` with `QUOTA UNKNOWN` — never `NORMAL`. A reading older than `--max-snapshot-age-seconds` (default 15 minutes) is likewise not treated as current headroom, and is displayed with its age rather than as a live number.
 
 ## Burn-rate runway (not task-cost prediction)
 
@@ -134,7 +174,7 @@ Before there is enough history, the default reserve is 4 percentage points. As q
 
 ```text
 reserve = clamp(
-  p90(recent positive burn) * landing_turns * safety_factor,
+  p90(recent positive per-tool-call burn) * landing_tool_calls * safety_factor,
   min_reserve,
   max_reserve
 )
@@ -145,7 +185,7 @@ Defaults:
 - minimum reserve: 3%
 - initial/default reserve: 4%
 - maximum reserve: 15%
-- landing turns: 3
+- landing tool calls: 8
 - safety factor: 1.5
 - conserve warning: 5% before the landing boundary
 
@@ -178,7 +218,7 @@ pip install -e .
 Smoke test the policy without either agent installed:
 
 ```bash
-landing simulate --start 100 --preserve 70 --burn 0.5,0.7,0.6 --step 2
+landing simulate --start 100 --leave 70 --burn 0.5,0.7,0.6 --step 2
 ```
 
 Bootstrap a fake Claude snapshot for local testing:
@@ -186,8 +226,8 @@ Bootstrap a fake Claude snapshot for local testing:
 ```bash
 landing start \
   --provider claude \
-  --window seven_day \
-  --preserve 70 \
+  --window auto \
+  --leave 70 \
   --remaining 90 \
   --task "Demo task"
 ```

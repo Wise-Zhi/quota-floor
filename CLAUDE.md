@@ -48,7 +48,7 @@ When asked to test or review this repository:
 pytest -q
 python -m compileall -q src
 landing --help
-landing simulate --start 100 --preserve 70 --burn 0.5,0.7,0.6 --step 2
+landing simulate --start 100 --leave 70 --burn 0.5,0.7,0.6 --step 2
 landing status
 ```
 

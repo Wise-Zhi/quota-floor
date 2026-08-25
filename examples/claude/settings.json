@@ -23,6 +23,16 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "landing hook-user-prompt --platform claude"
+          }
+        ]
+      }
     ]
   }
 }

@@ -1,0 +1,38 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "\"C:/Users/user/Desktop/Landing/.venv/Scripts/python.exe\" -m agent_landing.cli claude-statusline"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:/Users/user/Desktop/Landing/.venv/Scripts/python.exe\" -m agent_landing.cli hook-pre-tool --platform claude"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:/Users/user/Desktop/Landing/.venv/Scripts/python.exe\" -m agent_landing.cli hook-post-tool --platform claude"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:/Users/user/Desktop/Landing/.venv/Scripts/python.exe\" -m agent_landing.cli hook-user-prompt --platform claude"
+          }
+        ]
+      }
+    ]
+  }
+}

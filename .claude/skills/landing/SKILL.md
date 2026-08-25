@@ -1,34 +1,79 @@
 ---
 name: landing
 description: Start a quota-budgeted coding task with a hard remaining-quota floor and graceful handoff.
-argument-hint: '[weekly|5h] <percent-left> -- <task>'
+argument-hint: '(leave|spend) [weekly|5h] <percent> -- <task>'
 disable-model-invocation: true
 allowed-tools: Bash(landing *)
 ---
 
-Use Agent Landing for this task. The raw invocation arguments are:
+Use Agent Landing for this task.
 
-`$ARGUMENTS`
+## Do not parse the arguments yourself
 
-Interpret the invocation as:
+Pass the raw invocation straight through:
 
-- the standalone numeric argument after the optional window is the minimum remaining quota floor, in percent;
-- `--` separates the quota options from the task text;
-- if no quota window is named, use `seven_day`;
-- `5h` or `five_hour` selects the five-hour window;
-- `weekly` or `seven_day` selects the seven-day window.
-- never interpret the `5` inside the `5h` window token as the quota floor.
+```bash
+landing invoke "$ARGUMENTS" --provider claude
+```
+
+`landing invoke` is the single parser shared by Claude Code and Codex, so the two
+hosts cannot disagree about what an invocation means.
+
+**If the command exits non-zero**, it printed a refusal explaining what was wrong,
+the expected syntax, and possibly a suggested correction. Show that message to the
+user and **stop**. Do not start implementation, do not retry with a guessed value,
+and do not start a budget by calling `landing start` directly. Starting work
+without a budget is the one outcome worse than refusing: the user would believe
+they were protected while nothing was guarding their quota.
+
+**If it succeeds**, it printed an `interpretation` line. Show that line to the user
+before beginning work, so a misunderstanding surfaces before any quota is spent.
+
+## Syntax
+
+```text
+/landing (leave|spend) [weekly|5h] <percent> -- <task>
+```
+
+- `leave 70` — stop while at least **70% remains**.
+- `spend 15` — spend at most **15 percentage points**, whatever that leaves.
+- One of the two keywords is **required**. A bare number is refused, because a
+  dropped keyword would otherwise stay a legal invocation carrying the opposite
+  meaning: `spend 15` degrading to `15` would authorize 76 points of spend
+  instead of 15, with nothing to catch it.
+- `--` is optional; the first word that is neither a keyword, a window, nor a
+  number starts the task.
+- The settings may come **before or after** the task, whichever reads more
+  naturally: `leave 70 -- fix the tests` and `fix the tests leave 70` are the
+  same request. A trailing group is only recognized when it is complete (a
+  keyword plus a number), so a number or the word `leave` occurring inside the
+  task text is never mistaken for settings.
+- `weekly` or `5h` is **optional**. Omit it and Agent Landing uses the longest
+  window your plan exposes — weekly where it exists, the five-hour window on
+  plans that only have that one. Landing feasibility is checked on *every*
+  window either way, so the one you did not name can never be silently
+  exhausted. Name it only to put the floor itself on that window.
 
 Examples:
 
-- `/landing 70 -- refactor auth and add tests`
-- `/landing weekly 75 -- fix the failing checkout tests`
-- `/landing 5h 30 -- investigate the flaky integration test`
+- `/landing leave 70 -- refactor auth and add tests`
+- `/landing spend 15 -- fix the failing checkout tests`
+- `/landing leave 30 fix the checkout tests`   (the `--` is optional)
+- `/landing leave 5h 30 -- investigate the flaky test`   (pin the floor to one window)
 
-Before implementation, summarize the task text after `--` into one concise shell-safe task description and run:
+## While working
 
-`landing start --provider claude --window <window> --preserve <floor> --task <task>`
+Execute the requested task normally. Treat the floor as a hard lower bound, never
+as a spending target. If the task completes early, immediately run
+`landing complete` and stop — never invent extra work, tests, refactors, or polish
+to consume the unused allowance.
 
-Then execute the requested task normally. Treat the floor as a hard lower bound, never as a spending target. If the task completes early, immediately run `landing complete` and stop. When hooks inject CONSERVE, LAND, EMERGENCY, or STOPPED state, follow them exactly. Do not invent extra work to consume unused quota.
+The budget contract outlives a single task: if the user sends a new instruction
+afterwards, the guard automatically starts a new segment under the same floor.
 
-If the invocation does not contain a task after `--`, do not start implementation or create a budgeted session. Briefly show the expected syntax instead.
+If the user wants the budget itself to end — "stop watching my quota", "forget the
+budget", "cancel that" — run `landing cancel`. That ends the contract and stands
+the guard down; a later instruction will not restart the floor. Use `landing
+complete` only when the *task* is done and the budget should stay in force.
+
+When hooks inject CONSERVE, LAND, EMERGENCY, or STOPPED state, follow them exactly.
