@@ -165,6 +165,11 @@ Do not intentionally burn account quota just to hit a threshold. Prefer a floor 
 
 Validation goals:
 
+0. **The hooks are trusted.** `hooks/list` on the app-server must report
+   `"trustStatus": "trusted"` for each entry, not merely `"enabled": true`. An
+   untrusted hook is never invoked by the host, so every downstream result below
+   would be measuring nothing. Trust is granted only through the interactive
+   startup review screen, and resets to `modified` after any edit to the file.
 1. `landing codex-snapshot --json` returns quota without a model turn.
 2. The requested `five_hour`/`seven_day` window maps correctly, and `usedPercent` is read as consumed quota.
 3. Stale quota is refreshed before a Codex PreToolUse decision.

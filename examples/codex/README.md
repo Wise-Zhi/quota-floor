@@ -52,17 +52,56 @@ Keep the input open a second or two; closing stdin immediately makes
 `app-server` drop the request. Match responses by `id` — unrelated notifications
 are interleaved into the stream.
 
-A healthy result lists one entry per hook with `"enabled": true` and an empty
-`warnings` array. A malformed file shows up as a warning naming the exact field,
-for example:
+Check **`trustStatus`**, not just `enabled`. Every record carries both, and they
+answer different questions:
+
+| Field | Means |
+| --- | --- |
+| `"enabled": true` | the entry is switched on in the file |
+| `"warnings": []` | the file parsed |
+| `"trustStatus": "trusted"` | **Codex will actually run it** |
+
+A hook can be `enabled: true` with zero warnings and still be
+`"trustStatus": "untrusted"`, in which case the host never invokes it and
+nothing is guarded. Print the whole record rather than the fields you expect:
+
+```bash
+... | python -c "import sys,json;[print(json.dumps(h,indent=2)) for l in sys.stdin if (m:=json.loads(l)).get('id')==2 for h in m['result']['data'][0]['hooks']]"
+```
+
+Values seen: `untrusted`, `trusted`, `modified` (edited since last trusted, needs
+re-review), `managed` (org-managed, always on).
+
+A malformed file shows up as a warning naming the exact field, for example:
 
 ```
 failed to parse hooks config ...\.codex\hooks.json:
 unknown field `PreToolUse`, expected `description` or `hooks`
 ```
 
-Note that `hooks/list` proves the file **parsed and loaded**. It does not prove
-Codex honors a `deny`; see below.
+So `hooks/list` answers two of the three questions: the file parsed, and Codex
+will run it. It still does not prove the host acts on a `deny`; see below.
+
+## Granting trust
+
+There is no `hooks/trust` app-server method and no `codex hooks trust`
+subcommand. Trust is granted **interactively**: start `codex` in the directory,
+and the startup review screen appears —
+
+```
+Hooks need review
+Hooks can run outside the sandbox after you trust them.
+  Trust all and continue
+  Continue without trusting (hooks won't run)
+```
+
+Until that happens `hooks/list` reports `untrusted` and the guard is inert. The
+same screen returns as `modified` after any edit to `hooks.json`, because trust
+is bound to the file's `currentHash`.
+
+An `-c bypass_hook_trust=true` override exists for the app-server. It skips the
+review entirely, which is a security control, not a formality — hooks run
+outside the sandbox. Prefer the review screen.
 
 ## Then check enforcement
 
