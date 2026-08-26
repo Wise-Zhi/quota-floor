@@ -40,6 +40,7 @@ When asked to test or review this repository:
 
 - Claude statusLine may not expose every model-scoped quota limit.
 - Codex hook denial behavior may vary by host build; verify actual enforcement instead of assuming it.
+- Codex's Agent Landing row is an autocomplete candidate, not a persistent argument hint. On `0.149.0-alpha.4.3`, Space dismisses an unselected row; select the skill before typing arguments.
 - Runway is wall-clock burn telemetry, not a promise about task completion time or task cost.
 
 ## Useful commands

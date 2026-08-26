@@ -163,6 +163,24 @@ Do not intentionally burn account quota just to hit a threshold. Prefer a floor 
 
 ## Codex integration test
 
+### Composer discovery check
+
+Test composer discovery separately from hook enforcement:
+
+1. Search for Agent Landing until its syntax row is visible.
+2. Record the displayed `shortDescription`.
+3. Press Space without selecting the row. On Codex
+   `0.149.0-alpha.4.3`, the row disappears because it was an autocomplete
+   candidate, not a persistent argument hint.
+4. Select Agent Landing first and confirm that Codex offers the configured
+   editable `defaultPrompt`: `Use $landing leave 75 -- <task>`.
+5. Use `skills/list` to capture the interface fields returned by the host. On
+   the verified build it returns `shortDescription` and `defaultPrompt`, but no
+   persistent `argumentHint` field.
+
+Do not count a visible candidate row as proof that the skill was selected, or
+as proof that its hooks are trusted and enforced.
+
 Validation goals:
 
 0. **The hooks are trusted.** `hooks/list` on the app-server must report

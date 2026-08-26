@@ -5,6 +5,19 @@ stable, default-on feature there (`codex features list` shows `hooks stable
 true`), and the payload format matches Claude Code's closely enough that Agent
 Landing's hook handlers work unchanged.
 
+## Composer discovery
+
+The **Agent Landing** row shown while searching in the Codex composer is an
+autocomplete candidate, not a persistent argument hint. On the verified build,
+pressing Space while the row is visible dismisses it without selecting the
+skill. Select the candidate first; the configured editable starter is
+`Use $landing leave 75 -- <task>`.
+
+The same build's `skills/list` result exposes `shortDescription` and
+`defaultPrompt` for the skill, but no persistent `argumentHint` field. Treat
+this as a host UI boundary: the disappearing row says nothing about Landing's
+argument parser or whether its hooks are installed, trusted, and enforced.
+
 ## Install
 
 Copy `hooks.json` to one of these, and replace the placeholder paths with real

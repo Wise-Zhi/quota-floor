@@ -5,6 +5,15 @@ description: Start a quota-budgeted coding task with a hard remaining-quota floo
 
 Use Agent Landing for this task.
 
+## Codex composer selection
+
+The syntax row in the Codex composer is an autocomplete candidate, not a
+persistent argument hint. Select **Agent Landing** before entering arguments;
+pressing Space while the candidate is merely visible dismisses it on Codex
+`0.149.0-alpha.4.3`. The configured editable starter is
+`Use $landing leave 75 -- <task>`. This composer behavior does not change the
+parser rules below.
+
 ## Do not parse the arguments yourself
 
 Pass the raw text that followed `$landing` straight through, unmodified:

@@ -38,6 +38,15 @@ Claude Code shows the expected format directly in slash-command autocomplete:
 /landing (leave|spend) [weekly|5h] <percent> -- <task>
 ```
 
+Codex's composer works differently. The **Agent Landing** row is an
+autocomplete candidate, not a persistent argument hint. Verified on Codex
+`0.149.0-alpha.4.3`: pressing Space while that row is visible dismisses it
+without selecting the skill. Select the row first; Codex can then apply the
+configured editable starter, `Use $landing leave 75 -- <task>`. The current
+`skills/list` interface exposes `shortDescription` and `defaultPrompt`, but no
+persistent `argumentHint`, so Landing cannot keep the candidate row visible
+after Space.
+
 - `leave 70` stops while at least 70% **remains**; `spend 15` spends at most 15
   percentage points. One of the two keywords is **required**: a bare number is
   refused, so that a dropped keyword can never silently mean the opposite.
@@ -51,8 +60,9 @@ Claude Code shows the expected format directly in slash-command autocomplete:
   keyword plus a number), so a number or the word `leave` occurring inside the
   task text is never mistaken for settings.
 
-For example: `/landing leave 75 -- fix the checkout tests`. In Codex, selecting
-`$landing` provides the editable starter `Use $landing leave 75 -- <task>`.
+For example: `/landing leave 75 -- fix the checkout tests`. In Codex, select
+**Agent Landing** before typing arguments; its editable starter is
+`Use $landing leave 75 -- <task>`.
 
 Invocations are parsed by `landing invoke`, not by the model, so both hosts agree
 and a typo is refused instead of silently starting an unguarded task.
