@@ -1,9 +1,15 @@
 # Codex integration
 
-Verified against **codex-cli 0.149.0-alpha.4.3** on Windows 11. Hooks are a
-stable, default-on feature there (`codex features list` shows `hooks stable
-true`), and the payload format matches Claude Code's closely enough that Agent
-Landing's hook handlers work unchanged.
+Verified against **codex-cli 0.149.0-alpha.4.3**, and re-verified unchanged on
+**0.150.0-alpha.8**, both on Windows 11. Hooks are a stable, default-on feature
+there (`codex features list` shows `hooks stable true`), and the payload format
+matches Claude Code's closely enough that Agent Landing's hook handlers work
+unchanged.
+
+Across that version bump the `pre-tool-use` input and output schemas were
+byte-identical: `permissionDecision` is still `allow|deny|ask`, the output still
+carries `hookEventName`/`permissionDecisionReason`/`additionalContext`, and the
+input still supplies `tool_name`/`tool_input`.
 
 ## Composer discovery
 
@@ -131,7 +137,8 @@ before involving the model at all:
 echo '{"hook_event_name":"PreToolUse","tool_name":"apply_patch","tool_input":{"file_path":"src/x.py"},"tool_use_id":"t","session_id":"s","cwd":".","model":"m","permission_mode":"default","transcript_path":null,"turn_id":"u"}' | landing hook-pre-tool --platform codex
 ```
 
-Expected in `LAND`, all verified on 0.149.0-alpha.4.3:
+Expected in `LAND`. These exercise Agent Landing's own logic, not the host, so
+they do not move with the Codex version:
 
 | Tool call | Decision |
 | --- | --- |
@@ -161,6 +168,17 @@ binary directly:
 ```bash
 landing invoke "leave 70 -- refactor auth" --provider codex --executable /path/to/codex
 ```
+
+On Windows the binary lives under a content-hashed directory that **rotates on
+every Codex update**:
+
+    %LOCALAPPDATA%\OpenAI\Codexin\<hash>\codex.exe
+
+Pinning `--executable` to one of those paths works until the next update and
+then silently stops: the spawn fails, Landing falls back to the last stored
+snapshot, and the budget is then enforced against increasingly stale quota
+(`CONSERVE`, not a crash). Resolve the newest match at call time instead of
+hardcoding a hash.
 
 ## Quota polarity
 

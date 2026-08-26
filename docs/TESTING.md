@@ -199,9 +199,9 @@ Because current Codex builds may differ in hook enforcement, record the exact Co
 ### Capturing a fresh rate-limit payload
 
 `tests/test_codex_rate_limits_contract.py` pins a payload captured from
-codex-cli 0.149.0-alpha.4.3. Re-capture it when the Codex version moves, since
-the field names are an external contract that no amount of unit testing can
-verify:
+codex-cli 0.149.0-alpha.4.3, and re-captured unchanged on 0.150.0-alpha.8.
+Re-capture it whenever the Codex version moves, since the field names are an
+external contract that no amount of unit testing can verify:
 
 ```bash
 printf '%s
