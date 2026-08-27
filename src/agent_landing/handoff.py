@@ -6,6 +6,32 @@ from pathlib import Path
 from .models import PolicyDecision, TaskSession
 
 
+def reserve_handoff_path(session: TaskSession) -> Path:
+    """Claim one non-destructive handoff path for this task.
+
+    Once claimed, the same task keeps updating the same file. An existing file
+    seen before the claim belongs to earlier work and is never overwritten.
+    """
+    cwd = Path(session.cwd).resolve()
+    requested = Path(session.handoff_path)
+    path = requested if requested.is_absolute() else cwd / requested
+    if session.handoff_path_reserved:
+        return path
+
+    if path.exists():
+        index = 2
+        while True:
+            candidate = path.with_name(f"{path.stem}-{index}{path.suffix}")
+            if not candidate.exists():
+                path = candidate
+                break
+            index += 1
+
+    session.handoff_path = str(path) if requested.is_absolute() else str(path.relative_to(cwd))
+    session.handoff_path_reserved = True
+    return path
+
+
 def _git(cwd: Path, *args: str) -> str:
     try:
         result = subprocess.run(
@@ -21,7 +47,7 @@ def landing_prompt(session: TaskSession, decision: PolicyDecision) -> str:
 The user required this task to preserve at least {session.floor_percent:.1f}% of the {session.window} quota.
 Current remaining quota is {decision.remaining_percent:.1f}%. The estimated landing reserve is {decision.reserve_percent:.1f}%.
 
-Do not start new implementation work or new workstreams. Preserve the current repository state and write `{session.handoff_path}` now.
+Do not start new implementation work or new workstreams. Preserve the current repository state and create or update this task's reserved handoff file, `{session.handoff_path}`, now. Do not write a different handoff file.
 The handoff must contain:
 - Original task / goal
 - What is completed and verified
@@ -37,7 +63,7 @@ Use only minimal read-only inspection needed to make the handoff accurate. Do no
 
 def write_fallback_handoff(session: TaskSession, decision: PolicyDecision) -> Path:
     cwd = Path(session.cwd).resolve()
-    path = cwd / session.handoff_path
+    path = reserve_handoff_path(session)
     status = _git(cwd, "status", "--short") or "clean working tree"
     diff_stat = _git(cwd, "diff", "--stat") or "no unstaged diff"
     staged_stat = _git(cwd, "diff", "--cached", "--stat") or "no staged diff"

@@ -72,6 +72,10 @@ failed, or one that produced no file, must leave the session in `LAND`. Marking
 it `landed` is terminal and not renewable, so recording it on a failed write
 would end the budget with no handoff at all.
 
+Verify that an existing handoff from an earlier task is never overwritten. The
+new task reserves the next numbered filename, uses it for both model-written and
+emergency fallback handoffs, and reports the saved path to the user.
+
 Verify too that the command allowlist cannot be escaped: `git status && <any write>`, `git diff > out.txt`, and `git status $(...)` must all be denied while plain `git status` is allowed.
 
 Relevant tests: `tests/test_hooks.py`, `tests/test_landing_gate.py`.

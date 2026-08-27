@@ -162,6 +162,11 @@ Provides both:
 - a model-facing landing prompt for a rich `AGENT_HANDOFF.md`;
 - a deterministic local fallback when quota is too low for another model turn.
 
+`reserve_handoff_path()` claims one path per task. If the requested path already
+exists before that claim, it is treated as an earlier task's artifact and the
+next numbered sibling is selected. Once reserved, LAND and EMERGENCY keep using
+that same path. Normal task completion creates no handoff file.
+
 ### `runway.py`
 
 Provides user-facing telemetry only.

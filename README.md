@@ -125,7 +125,7 @@ The intended AI UX is explicit and short: use `/landing` in Claude Code or `$lan
 
 - **NORMAL** — work normally.
 - **CONSERVE** — quota is getting close; finish the bounded objective and avoid new workstreams.
-- **LAND** — block new implementation work, permit minimal read-only inspection, require `AGENT_HANDOFF.md`, then stop.
+- **LAND** — block new implementation work, permit minimal read-only inspection, save this task's reserved handoff file, then stop. Existing handoffs from earlier tasks are preserved; a new task uses `AGENT_HANDOFF-2.md`, `-3.md`, and so on.
 - **EMERGENCY** — write a deterministic handoff locally without spending another model turn, then block tools.
 - **STOPPED** — the budgeted task is over until a new budget is explicitly started.
 

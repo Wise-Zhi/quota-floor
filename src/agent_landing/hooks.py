@@ -8,7 +8,7 @@ from pathlib import Path
 from time import time
 from typing import Any
 
-from .handoff import landing_prompt, write_fallback_handoff
+from .handoff import landing_prompt, reserve_handoff_path, write_fallback_handoff
 from .models import LandingState, PolicyDecision, QuotaSnapshot, QuotaWindow, TaskSession
 from .policy import evaluate, unknown_quota_decision
 from .state import CorruptStateError, StateStore
@@ -334,6 +334,9 @@ def _pre_tool_locked(payload: dict[str, Any], store: StateStore) -> dict[str, An
         return {}
 
     if decision.state == LandingState.LAND:
+        if not session.handoff_path_reserved:
+            reserve_handoff_path(session)
+            store.save_session(session)
         context = landing_prompt(session, decision)
         if is_safe_landing_tool(payload, session):
             if session.last_notified_state != LandingState.LAND:
@@ -490,4 +493,13 @@ def post_tool(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
             # Not renewable: the guard stopped this work because quota ran out.
             session.stop_reason = "landed"
             store.save_session(session)
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": "PostToolUse",
+                    "additionalContext": (
+                        f"Technical handoff saved at `{session.handoff_path}`. "
+                        "Tell the user in one sentence and stop."
+                    ),
+                }
+            }
     return {}

@@ -37,8 +37,9 @@ def test_post_handoff_stops_session(tmp_path):
     store = setup_store(tmp_path, 73.5)
     pre_tool({"tool_name": "Write", "tool_input": {"file_path": "src/new.py"}}, store)
     (tmp_path / "AGENT_HANDOFF.md").write_text("# handoff", encoding="utf-8")
-    post_tool({"tool_name": "Write", "tool_input": {"file_path": "AGENT_HANDOFF.md"}}, store)
+    result = post_tool({"tool_name": "Write", "tool_input": {"file_path": "AGENT_HANDOFF.md"}}, store)
     assert store.load_session().state == LandingState.STOPPED
+    assert "AGENT_HANDOFF.md" in result["hookSpecificOutput"]["additionalContext"]
 
 
 def test_a_handoff_write_that_produced_no_file_does_not_land_the_task(tmp_path):
@@ -85,6 +86,34 @@ def test_emergency_writes_fallback(tmp_path):
     assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert (tmp_path / "AGENT_HANDOFF.md").exists()
     assert store.load_session().state == LandingState.STOPPED
+
+
+def test_emergency_preserves_an_existing_handoff_and_writes_a_new_task_file(tmp_path):
+    old = tmp_path / "AGENT_HANDOFF.md"
+    old.write_text("# Previous task\nDo not overwrite me.\n", encoding="utf-8")
+    store = setup_store(tmp_path, 70.4)
+
+    pre_tool({"tool_name": "Write", "tool_input": {"file_path": "src/new.py"}}, store)
+
+    assert old.read_text(encoding="utf-8") == "# Previous task\nDo not overwrite me.\n"
+    new_path = tmp_path / "AGENT_HANDOFF-2.md"
+    assert new_path.exists()
+    assert "implement auth" in new_path.read_text(encoding="utf-8")
+    assert store.load_session().handoff_path == "AGENT_HANDOFF-2.md"
+
+
+def test_land_updates_the_path_reserved_for_the_current_task(tmp_path):
+    (tmp_path / "AGENT_HANDOFF.md").write_text("# Previous task", encoding="utf-8")
+    store = setup_store(tmp_path, 73.5)
+
+    pre_tool({"tool_name": "Write", "tool_input": {"file_path": "src/new.py"}}, store)
+    session = store.load_session()
+    assert session.handoff_path == "AGENT_HANDOFF-2.md"
+
+    old_path = pre_tool({"tool_name": "Write", "tool_input": {"file_path": "AGENT_HANDOFF.md"}}, store)
+    assert old_path["hookSpecificOutput"]["permissionDecision"] == "deny"
+    current_path = pre_tool({"tool_name": "Write", "tool_input": {"file_path": "AGENT_HANDOFF-2.md"}}, store)
+    assert current_path.get("hookSpecificOutput", {}).get("permissionDecision") != "deny"
 
 
 def test_task_complete_stops_even_far_above_floor(tmp_path):
