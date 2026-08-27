@@ -13,6 +13,15 @@ pipx install .
 landing install
 ```
 
+Once published, the same environment can be created from PyPI instead of a
+checkout:
+
+```bash
+pipx install agent-landing
+```
+
+The distribution is `agent-landing`; the command it installs is `landing`.
+
 `pipx` is recommended because it keeps a stable Python environment after the
 checkout is moved or deleted. A normal virtual environment also works, but that
 environment must remain at the same path for the hooks to start.

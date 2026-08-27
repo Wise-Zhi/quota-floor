@@ -265,6 +265,15 @@ landing install
 landing doctor
 ```
 
+Once published, the same environment can be created from PyPI instead of a
+checkout:
+
+```bash
+pipx install agent-landing
+```
+
+The distribution is `agent-landing`; the command it installs is `landing`.
+
 `landing install` is also the update command: run it again after upgrading the
 package. It installs the skill and hooks at user scope, so no copying is needed
 inside each repository:
