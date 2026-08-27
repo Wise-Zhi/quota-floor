@@ -301,7 +301,10 @@ def _pre_tool_locked(payload: dict[str, Any], store: StateStore) -> dict[str, An
         store.save_session(session)
         return hook_json(
             decision="deny",
-            reason="Quota budget boundary reached. New implementation work is blocked; write the technical handoff.",
+            reason=(
+                "Quota budget boundary reached. New implementation work is blocked; write the "
+                "technical handoff. " + CANCEL_HINT
+            ),
             context=context,
         )
 
@@ -319,41 +322,129 @@ def _pre_tool_locked(payload: dict[str, Any], store: StateStore) -> dict[str, An
             ),
         )
 
-    return hook_json(decision="deny", reason="Quota-budgeted task is stopped. Start a new budget to continue.")
+    return hook_json(
+        decision="deny",
+        reason="Quota-budgeted task is stopped. Start a new budget to continue. " + CANCEL_HINT,
+    )
+
+
+#: Spellings of an explicit, user-typed cancel. Matched against the WHOLE prompt
+#: and never as a substring: "why does /landing cancel not work?" is a question
+#: *about* the command, not an instruction to run it.
+_CANCEL_INVOCATIONS = frozenset({"/landing cancel", "$landing cancel", "landing cancel"})
+
+#: Phrases that merely *suggest* the budget should end. These only ever produce a
+#: hint; they never cancel anything. Acting on them would mean guessing, and a
+#: wrong guess silently removes the guard while the user still believes they are
+#: covered -- the failure this project ranks below having no guard at all. The
+#: list is best-effort and deliberately incomplete: a miss costs a hint, which is
+#: exactly the behaviour that existed before.
+_CANCEL_HINTS = (
+    "cancel the budget", "cancel my budget", "cancel the quota budget",
+    "stop watching my quota", "stop guarding", "forget the budget",
+    "drop the budget", "end the budget", "lift the budget",
+    "取消预算", "取消这个预算", "撤销预算", "关掉预算", "别管配额", "不用管配额",
+)
+
+
+def is_cancel_invocation(prompt: str) -> bool:
+    """Did the user type the explicit cancel command, and nothing else?"""
+    return " ".join((prompt or "").split()).casefold() in _CANCEL_INVOCATIONS
+
+
+def suggests_cancel(prompt: str) -> bool:
+    """Does the prompt read like a request to end the budget? Hint only."""
+    text = (prompt or "").casefold()
+    return any(phrase in text for phrase in _CANCEL_HINTS)
+
+
+def cancel_session(session: TaskSession) -> bool:
+    """End the contract and stand the guard down. False if already cancelled."""
+    if session.is_cancelled:
+        return False
+    session.state = LandingState.STOPPED
+    session.stop_reason = "cancelled"
+    session.last_notified_state = None
+    return True
+
+
+def _prompt_context(text: str) -> dict[str, Any]:
+    return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": text}}
 
 
 def user_prompt(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
-    """Renew the budget when the *user* sends a new instruction.
+    """Act on a new user instruction: cancel the budget, or renew a segment.
 
-    This is the only place a completed segment may be renewed. A new user prompt
-    is the one signal the agent cannot manufacture for itself, which keeps two
-    rules true at once: the budget contract survives task boundaries, and the
-    agent still cannot invent work after `landing complete`.
+    This hook is the only channel that can prove the *user* asked for something --
+    an agent cannot manufacture a `UserPromptSubmit`. That is what lets it change
+    the contract at all, and it is why both privileged actions live here.
+
+    Cancelling from this hook exists because the guard denies `landing cancel` as
+    a tool call, which is correct (an agent must never lift its own floor) but
+    used to leave the contract with no exit at all: a user away from a terminal
+    could not stand down a guard that was blocking their agent. The hook already
+    receives the user's own words, so it can simply do it.
     """
-    session = store.load_session()
-    if not session or not renew_completed_segment(session):
-        return {}
-    store.save_session(session)
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
-            "additionalContext": (
-                f"Quota guard: the previous task completed and a new segment (#{session.segment_count}) "
-                f"has started under the same budget. The {session.window} floor is still "
-                f"{session.floor_percent:.1f}% and is a hard limit, never a spending target."
-            ),
-        }
-    }
+    prompt = str(payload.get("prompt") or payload.get("user_prompt") or "")
+    explicit = is_cancel_invocation(prompt)
+
+    with store.lock():
+        session = store.load_session()
+        if not session:
+            if explicit:
+                return _prompt_context(
+                    "Quota guard: there is no active quota budget to cancel. Tool use is "
+                    "unrestricted. Tell the user, and do not run any landing command."
+                )
+            return {}
+
+        if explicit:
+            cancelled = cancel_session(session)
+            if cancelled:
+                store.save_session(session)
+            return _prompt_context(
+                "Quota guard: the user cancelled the quota budget, and it has already been "
+                "stood down by this hook. Tool use is unrestricted and a later instruction "
+                f"will NOT restart the {session.floor_percent:.1f}% floor. Tell the user it is "
+                "cancelled and do not run any landing command for it."
+                if cancelled
+                else "Quota guard: the budget was already cancelled; nothing to do. Do not run "
+                "any landing command for it."
+            )
+
+        if not session.is_cancelled and suggests_cancel(prompt):
+            # Deliberately does not cancel: this is a guess, and a wrong guess
+            # unguards the user silently. Point at the exact phrasing that works.
+            return _prompt_context(
+                "Quota guard: the user may be asking to end the quota budget, but that was not "
+                "the explicit command, so nothing was changed. Tell the user to type "
+                "`/landing cancel` (Claude Code) or `$landing cancel` (Codex) as the whole "
+                "message. Do not attempt to cancel it yourself -- an agent cannot lift its own "
+                "quota floor, and the attempt will be denied."
+            )
+
+        # `cwd` is where the host launched the hook, i.e. the project the user is
+        # actually in right now -- which need not be the one the budget started in.
+        if not renew_completed_segment(session, cwd=payload.get("cwd") or os.getcwd()):
+            return {}
+        store.save_session(session)
+
+    return _prompt_context(
+        f"Quota guard: the previous task completed and a new segment (#{session.segment_count}) "
+        f"has started under the same budget. The {session.window} floor is still "
+        f"{session.floor_percent:.1f}% and is a hard limit, never a spending target."
+    )
 
 
 def post_tool(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
-    session = store.load_session()
-    if not session:
-        return {}
-    if session.state == LandingState.LAND and is_handoff_write(payload, session):
-        session.state = LandingState.STOPPED
-        session.last_notified_state = LandingState.STOPPED
-        # Not renewable: the guard stopped this work because quota ran out.
-        session.stop_reason = "landed"
-        store.save_session(session)
+    with store.lock():
+        session = store.load_session()
+        if not session:
+            return {}
+        if session.state == LandingState.LAND and handoff_landed(payload, session):
+            session.state = LandingState.STOPPED
+            session.last_notified_state = LandingState.STOPPED
+            # Not renewable: the guard stopped this work because quota ran out.
+            session.stop_reason = "landed"
+            store.save_session(session)
     return {}

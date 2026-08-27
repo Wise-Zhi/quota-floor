@@ -13,7 +13,7 @@ pip install -e .
 pytest -q
 ```
 
-Expected current baseline: all repository tests pass (149 at time of writing).
+Expected current baseline: all repository tests pass (222 at time of writing).
 
 Also run:
 
@@ -67,6 +67,11 @@ Construct a state whose remaining quota is at the development floor. Verify:
 - the configured `AGENT_HANDOFF.md` write is allowed;
 - after the handoff write, the session becomes `STOPPED`.
 
+Verify too that the handoff has to actually exist: a handoff write reported as
+failed, or one that produced no file, must leave the session in `LAND`. Marking
+it `landed` is terminal and not renewable, so recording it on a failed write
+would end the budget with no handoff at all.
+
 Verify too that the command allowlist cannot be escaped: `git status && <any write>`, `git diff > out.txt`, and `git status $(...)` must all be denied while plain `git status` is allowed.
 
 Relevant tests: `tests/test_hooks.py`, `tests/test_landing_gate.py`.
@@ -96,7 +101,13 @@ Verify that:
 - a healthy weekly window does **not** mask an exhausted five-hour window — landing is forced by whichever runs out first;
 - if the pinned window disappears, the budget migrates rather than silently ceasing to guard.
 
-Relevant tests: `tests/test_multi_window.py`.
+Verify too that `spend N` is a **per-window delta** everywhere, including in the
+pre-flight check `landing start` runs. With the weekly window at 90% and the
+five-hour window at 20%, `spend 15` must start and produce a five-hour floor of
+5%, not be refused for sitting below 90−15. That check asks `window_floor()` and
+`window_pressure()` the same questions the gate asks, so the two cannot disagree.
+
+Relevant tests: `tests/test_multi_window.py`, `tests/test_floor_scope.py`.
 
 ### 7. Unknown and stale quota are not headroom
 
@@ -136,6 +147,63 @@ Verify that:
 - dashboard labels describe observed burn-rate runway rather than total task cost.
 
 Relevant tests: `tests/test_runway.py` and `tests/test_dashboard.py`.
+
+### 11. The gate fails closed, and there is a way back out
+
+A hook that raises exits non-zero, and Claude Code treats every exit code other
+than 2 as a non-blocking error — the tool then runs anyway. So a crash in the
+gate does not break a feature, it removes the guard silently. Truncate
+`.landing/session.json` mid-file and verify:
+
+- `landing hook-pre-tool` exits **0** and returns an explicit `deny`, not a traceback;
+- the denial names `landing cancel` as the way out;
+- `landing cancel` works on that same damaged file, moving it aside;
+- afterwards the gate returns `{}` and tool use is unrestricted;
+- with **no** session file at all, an internal error blocks nothing — no budget was requested, so there is no mandate to enforce.
+
+Verify separately that `landing claude-statusline` still ingests quota while the
+session is damaged: on Claude Code it runs as the statusLine and must never fail.
+
+Relevant tests: `tests/test_state_integrity.py`.
+
+### 12. Concurrent tool calls do not lose burn accounting
+
+Hosts issue tool calls in parallel and each one runs the gate in its own process.
+Run many gate evaluations concurrently against one store and verify every call is
+counted. Unserialized this measured 1 of 40, which biases the landing reserve
+downwards — the unsafe direction.
+
+Relevant tests: `tests/test_state_integrity.py::test_concurrent_tool_calls_do_not_lose_burn_accounting`.
+
+### 13. The budget follows the account, not the checkout
+
+Start a budget in one directory and fire a `PreToolUse` hook from another.
+Verify that the same budget applies and still binds — quota is account-wide, so a
+floor that stopped at the repository boundary was not guarding what it claimed
+to. Verify too that `--state-scope project` restores per-checkout state, that
+`LANDING_HOME` overrides both, and that an unknown scope is refused rather than
+guessed.
+
+Because one budget spans checkouts, verify that renewing a segment re-points
+`session.cwd` at the directory the new instruction came from: an emergency
+handoff has to land where the work actually is.
+
+Relevant tests: `tests/test_state_scope.py`.
+
+### 14. Landing shares the status line rather than taking it
+
+Claude Code has one `statusLine` slot and reports `rate_limits` only there.
+Install over an existing status line and verify:
+
+- the existing command is wrapped, not replaced, and its output is what appears;
+- quota is still ingested while wrapping — that is the point of the slot;
+- the wrapped command receives the same payload Claude sent;
+- a failing wrapped command falls back to Landing's own line instead of an empty bar;
+- `landing uninstall` restores the original command;
+- re-running `landing install` wraps the same command once, not its own wrapper;
+- a command containing a double quote is refused rather than mangled.
+
+Relevant tests: `tests/test_statusline_wrapper.py`, `tests/test_installation.py`.
 
 ## Claude Code integration test
 

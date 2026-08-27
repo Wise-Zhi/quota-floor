@@ -51,9 +51,17 @@ _WINDOW_ALIASES = {
 _FLOOR = re.compile(r"^(\d{1,3}(?:\.\d+)?)%?$")
 
 
+#: Bare verbs that end the contract rather than starting one. Recognized here as
+#: well as in the `UserPromptSubmit` hook, so the meaning is identical on a host
+#: that has no such hook and on one where the agent routes it through `invoke`.
+_CANCEL_VERBS = frozenset({"cancel", "stop", "abort"})
+
+
 @dataclass
 class ParsedInvocation:
     ok: bool
+    #: "start" opens a budget; "cancel" ends the contract entirely.
+    action: str = "start"
     #: "auto" resolves to the longest window the account actually exposes, so a
     #: Plus account (five-hour only) and a Pro account (weekly) both work without
     #: the user knowing which plan they are on.
@@ -73,9 +81,12 @@ class ParsedInvocation:
         return self.mode == "preserve"
 
     def to_dict(self) -> dict[str, Any]:
+        if self.ok and self.action == "cancel":
+            return {"ok": True, "action": "cancel"}
         if self.ok:
             return {
                 "ok": True,
+                "action": self.action,
                 "window": self.window,
                 "mode": self.mode,
                 "percent": self.percent,
@@ -204,6 +215,11 @@ def parse_invocation(raw: str) -> ParsedInvocation:
     tokens = (raw or "").strip().split()
     if not tokens:
         return _fail("no arguments were provided.")
+
+    if len(tokens) == 1 and tokens[0].lower().lstrip("-") in _CANCEL_VERBS:
+        # Only the bare verb, never a verb buried in a task description: ending
+        # the contract is not something to infer from a passing mention.
+        return ParsedInvocation(ok=True, action="cancel")
 
     option_tokens, task_tokens = _split_options_and_task(tokens)
 

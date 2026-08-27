@@ -75,7 +75,7 @@ Users interact with it in three places:
 
 The local web dashboard is optional diagnostics/history only. It should never be required for normal use and should not pop up automatically.
 
-A future installer should print this once after setup:
+The installer prints this once after setup:
 
 ```text
 Landing is ready.
@@ -132,7 +132,9 @@ Only a *new user instruction* may start that segment. Both Claude Code and Codex
 
 A session that stopped because quota actually ran out (`landed` or `emergency`) is **not** renewable. Renewing there would defeat the floor.
 
-To end the contract itself rather than one task, run `landing cancel`. The guard stands down, later instructions do not restart the floor, and the session is kept on disk so its burn history remains useful to the next budget.
+To end the contract itself rather than one task, send `/landing cancel` (Codex: `$landing cancel`) as a whole message. The guard stands down, later instructions do not restart the floor, and the session is kept on disk so its burn history remains useful to the next budget.
+
+It has to be sent as an instruction rather than run as a command, because the gate denies the agent its own cancel — an agent must never lift its own floor. The `UserPromptSubmit` hook is the one channel an agent cannot manufacture, so that is where a cancel is honoured. A phrasing that only *resembles* a cancel ("forget the budget") is answered with a pointer to the exact command and changes nothing: guessing here would unguard a user who still believes they are covered.
 
 ## Quota windows and plans
 
@@ -217,6 +219,73 @@ See [`examples/codex/config.toml`](examples/codex/config.toml).
 
 The Codex hook refreshes a stale quota snapshot before evaluating a tool call. Current Codex hook support is still evolving across CLI/Desktop builds, so v0.1 targets the documented/implemented hook schema and treats runtime hook regressions as a platform limitation rather than fabricating quota state.
 
+## Install once for every project
+
+Install Landing into a persistent Python environment, then let it merge the
+user-level configuration for both hosts:
+
+```bash
+# From a downloaded or cloned checkout. pipx keeps the runtime independent of
+# this repository, so the hooks do not break if the checkout is moved later.
+pipx install .
+landing install
+landing doctor
+```
+
+`landing install` is also the update command: run it again after upgrading the
+package. It installs the skill and hooks at user scope, so no copying is needed
+inside each repository:
+
+| Host | Persistent skill | Persistent configuration |
+| --- | --- | --- |
+| Codex | `~/.agents/skills/landing/` | `~/.codex/hooks.json` |
+| Claude Code | `~/.claude/skills/landing/` | `~/.claude/settings.json` |
+
+The merge preserves unrelated settings and hooks. It refuses to overwrite invalid
+JSON or an unowned skill directory with the same name. Hook commands point at the
+Python environment that installed Landing, not at this repository.
+
+Claude Code has exactly one `statusLine` slot, and it reports `rate_limits`
+there and nowhere else — so that slot is Landing's only quota source. Landing
+**shares** it rather than taking it: an existing status line is wrapped, so
+Landing ingests quota from the payload and then runs your command with the same
+payload and prints its output unchanged. `landing uninstall` puts your original
+command back. A command containing a double quote cannot be re-quoted safely, so
+that one case is refused instead of guessed at.
+
+The budget itself lives in `~/.landing/`, not in the repository, because quota
+is account-wide: a floor set in one checkout keeps guarding when the agent moves
+to another against the same quota. Use `--state-scope project` (or
+`LANDING_STATE_SCOPE=project`) for one budget per checkout; `LANDING_HOME` still
+overrides both. `landing install` adopts a budget left in an older
+project-scoped `.landing/` rather than appearing to forget the floor.
+
+Codex deliberately requires one manual security confirmation after its hook
+file changes. Open Codex, review the pending hooks, and trust the three Landing
+entries. Use **Trust all and continue** only if every pending hook is expected;
+the review screen can include unrelated plugins. Then rerun `landing doctor`.
+Doctor asks the local app-server whether
+all three hooks are loaded from user scope and trusted; it does not spend a
+model turn. On Windows it also discovers the Codex Desktop executable when it
+is not on PATH.
+
+Install only one host when needed:
+
+```bash
+landing install --host codex
+landing install --host claude
+```
+
+Remove Landing without touching unrelated user configuration:
+
+```bash
+landing uninstall
+```
+
+See [`docs/INSTALLATION.md`](docs/INSTALLATION.md) for update, conflict, trust,
+and verification details. The files under `examples/` remain manual reference
+configurations for development; they are not required in each project.
+
 ## Install for development
 
 ```bash
@@ -264,6 +333,7 @@ If quota reaches the emergency margin, Agent Landing writes a lower-fidelity but
 3. **Unknown is not 100%.** Missing or stale quota data must never be interpreted as unlimited headroom.
 4. **Provider-neutral core.** Claude Code and Codex differ in quota acquisition, not in budget semantics.
 5. **Graceful degradation.** Rich model handoff when possible; deterministic Git-state handoff in an emergency.
+6. **The gate fails closed.** A hook that crashes is a hook the host ignores, which would leave the session unguarded while the user still believes it is protected. If the budget cannot be evaluated, work is denied and the message says how to stand the guard down. Where no budget was ever requested, an internal error blocks nothing.
 
 ## Technical documentation
 
@@ -273,13 +343,13 @@ If quota reaches the emergency margin, Agent Landing writes a lower-fidelity but
 
 ## v0.1 limitations / next work
 
-- Add an installer that merges hook config safely instead of requiring manual config snippets.
 - Validate against real Claude Code and Codex installations on macOS/Linux/Windows.
 - Add task-history/burn-rate charts and a compact cross-provider statusline mode.
 - Add model-scoped Claude limits when/if the runtime exposes them to statusLine.
 - Make landing-safe test commands configurable instead of using a minimal built-in allowlist.
 - Add a local event log so the handoff can include commands/tests even when the model cannot spend a final turn.
-- Package as a Claude/Codex installable skill/plugin after the runtime integration is proven.
+- Add native marketplace/plugin distribution as an optional channel after the
+  cross-host package installer is proven.
 
 ### Codex enforcement caveat
 
@@ -288,3 +358,5 @@ Codex's hook schema supports `PreToolUse` allow/deny decisions, but current buil
 ## License
 
 MIT
+
+<!-- Documentation sync check. -->

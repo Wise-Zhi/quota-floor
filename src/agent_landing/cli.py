@@ -11,6 +11,7 @@ from time import time
 from .dashboard import serve_dashboard
 from .handoff import write_fallback_handoff
 from .hooks import (
+    cancel_session,
     evaluate_current,
     gate_failure,
     post_tool,
@@ -388,6 +389,12 @@ def cmd_invoke(args: argparse.Namespace) -> int:
     drift apart and a user cannot learn one and be burned by the other.
     """
     parsed = parse_invocation(args.arguments)
+    if parsed.ok and parsed.action == "cancel":
+        # `/landing cancel` normally never reaches here -- the UserPromptSubmit
+        # hook stands the guard down before the agent runs anything. This is the
+        # fallback for hosts without that hook, and it keeps the two paths
+        # meaning exactly the same thing.
+        return cmd_cancel(args)
     if not parsed.ok:
         # Refuse rather than guess: silently starting work without a budget, or
         # with a misread floor, is worse than not starting at all.
