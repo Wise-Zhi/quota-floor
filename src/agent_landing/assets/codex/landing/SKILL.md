@@ -58,9 +58,11 @@ earlier if the task finishes.` Never describe the allowance as a target.
 
 Landing is a constraint on the task, not the task itself. The text after the
 settings is the work to perform. Complete that work normally and report its
-observable result. If the text contains no concrete work (for example, only
-`try it`), do not claim project work was completed: say briefly that the guard
-was verified and that no project changes were requested.
+observable result. Use ordinary contextual judgment for natural requests such as
+`try it`, `test it`, or `take a look`; infer their subject from the current
+project and conversation exactly as you would without Landing. Do not downgrade
+them to an empty task. Only the deterministic parser decides that a task is
+missing.
 
 This skill also triggers on a plain-language budget request, not only on an
 explicit invocation. Pass the user's own words through unchanged and **never
