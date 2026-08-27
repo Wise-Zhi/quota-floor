@@ -58,9 +58,11 @@ the host exposes a `UserPromptSubmit` hook (Claude Code, and Codex from
 0.149), or manually with `landing resume` on hosts that have no equivalent.
 
 If the user wants the budget itself to end — "stop watching my quota", "forget the
-budget", "cancel that" — run `landing cancel`. That ends the contract and stands
-the guard down; a later instruction will not restart the floor. Use `landing
-complete` only when the *task* is done and the budget should stay in force.
+budget", "cancel that" — **do not run a cancel command**. An agent cannot lift its
+own quota floor, and at the boundary the attempt is denied. Tell the user to send
+`/landing cancel` as their whole message; the guard stands down before the next
+turn begins. Use `landing complete` only when the *task* is done and the budget
+should stay in force.
 
 ## Runway telemetry
 

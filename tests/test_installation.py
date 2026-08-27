@@ -1,0 +1,424 @@
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+from agent_landing.cli import build_parser
+from agent_landing.installation import (
+    InstallationConflict,
+    doctor_host,
+    install_host,
+    uninstall_host,
+)
+
+
+def _read(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _commands(config: dict, event: str) -> list[str]:
+    return [
+        hook["command"]
+        for group in config["hooks"][event]
+        for hook in group.get("hooks", [])
+    ]
+
+
+def test_codex_install_is_global_portable_and_preserves_unrelated_hooks(tmp_path):
+    config_path = tmp_path / ".codex" / "hooks.json"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        json.dumps(
+            {
+                "description": "mine",
+                "hooks": {
+                    "PreToolUse": [
+                        {"matcher": "read_file", "hooks": [{"type": "command", "command": "audit"}]}
+                    ]
+                },
+                "extra": {"keep": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = install_host(
+        "codex",
+        home=tmp_path,
+        python_executable="C:/Python/python.exe",
+        codex_executable="C:/Codex/codex.exe",
+        os_name="nt",
+    )
+    config = _read(config_path)
+
+    assert result["status"] == "installed"
+    assert config["description"] == "mine"
+    assert config["extra"] == {"keep": True}
+    assert "audit" in _commands(config, "PreToolUse")
+    for event in ("PreToolUse", "PostToolUse", "UserPromptSubmit"):
+        landing = [command for command in _commands(config, event) if "agent_landing.cli" in command]
+        assert len(landing) == 1
+        assert "C:/Python/python.exe" in landing[0]
+    assert "C:/Codex/codex.exe" in _commands(config, "PreToolUse")[1]
+    assert (tmp_path / ".agents" / "skills" / "landing" / "SKILL.md").is_file()
+    assert (tmp_path / ".agents" / "skills" / "landing" / "agents" / "openai.yaml").is_file()
+    assert (tmp_path / ".agents" / "skills" / "landing" / ".landing-install.json").is_file()
+    installed_skill = (tmp_path / ".agents" / "skills" / "landing" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+    assert '"C:/Python/python.exe" -m agent_landing.cli invoke' in installed_skill
+    assert "```powershell" in installed_skill
+    assert "\nlanding invoke" not in installed_skill
+
+
+def test_codex_reinstall_replaces_old_landing_entries_without_duplicates(tmp_path):
+    install_host("codex", home=tmp_path, python_executable="C:/Old/python.exe", os_name="nt")
+    result = install_host("codex", home=tmp_path, python_executable="C:/New/python.exe", os_name="nt")
+    config = _read(tmp_path / ".codex" / "hooks.json")
+
+    assert result["status"] == "updated"
+    for event in ("PreToolUse", "PostToolUse", "UserPromptSubmit"):
+        landing = [command for command in _commands(config, event) if "agent_landing.cli" in command]
+        assert len(landing) == 1
+        assert "C:/New/python.exe" in landing[0]
+        assert "C:/Old/python.exe" not in landing[0]
+
+
+def test_claude_install_merges_settings_and_installs_user_skill(tmp_path):
+    settings_path = tmp_path / ".claude" / "settings.json"
+    settings_path.parent.mkdir()
+    settings_path.write_text(
+        json.dumps({"permissions": {"allow": ["Read"]}, "hooks": {"Stop": [{"hooks": []}]}}),
+        encoding="utf-8",
+    )
+
+    install_host("claude", home=tmp_path, python_executable="/opt/landing/bin/python", os_name="posix")
+    settings = _read(settings_path)
+
+    assert settings["permissions"] == {"allow": ["Read"]}
+    assert "Stop" in settings["hooks"]
+    assert settings["statusLine"]["command"].startswith("/opt/landing/bin/python -m agent_landing.cli")
+    for event in ("PreToolUse", "PostToolUse", "UserPromptSubmit"):
+        assert len([c for c in _commands(settings, event) if "agent_landing.cli" in c]) == 1
+    assert (tmp_path / ".claude" / "skills" / "landing" / "SKILL.md").is_file()
+
+
+def _with_status_line(tmp_path: Path, command: str) -> Path:
+    settings_path = tmp_path / ".claude" / "settings.json"
+    settings_path.parent.mkdir(exist_ok=True)
+    settings_path.write_text(
+        json.dumps({"statusLine": {"type": "command", "command": command}}), encoding="utf-8"
+    )
+    return settings_path
+
+
+def test_an_existing_status_line_is_wrapped_rather_than_taken(tmp_path):
+    """Claude Code has one statusLine slot and reports quota only there.
+
+    Refusing to share it locked out precisely the users who already run a status
+    line -- the same people who want a quota budget in the first place.
+    """
+    settings_path = _with_status_line(tmp_path, "my-status --fancy")
+    install_host("claude", home=tmp_path, python_executable="python", os_name="posix")
+
+    command = _read(settings_path)["statusLine"]["command"]
+    assert "agent_landing.cli claude-statusline" in command
+    assert "--wrap 'my-status --fancy'" in command
+
+
+def test_uninstall_gives_a_wrapped_status_line_back(tmp_path):
+    """Landing borrowed the slot; it was never Landing's to delete."""
+    settings_path = _with_status_line(tmp_path, "my-status --fancy")
+    install_host("claude", home=tmp_path, python_executable="python", os_name="posix")
+    uninstall_host("claude", home=tmp_path)
+
+    assert _read(settings_path)["statusLine"] == {"type": "command", "command": "my-status --fancy"}
+
+
+def test_reinstalling_keeps_wrapping_the_same_command(tmp_path):
+    """`install` is also the update command, so it must not eat its own wrapper."""
+    settings_path = _with_status_line(tmp_path, "my-status")
+    install_host("claude", home=tmp_path, python_executable="python", os_name="posix")
+    install_host("claude", home=tmp_path, python_executable="/new/python", os_name="posix")
+
+    command = _read(settings_path)["statusLine"]["command"]
+    assert command.startswith("/new/python")
+    assert command.count("--wrap") == 1
+    assert "--wrap my-status" in command
+
+
+def test_a_status_line_that_cannot_be_wrapped_safely_is_refused(tmp_path):
+    """A mangled status line is a mangled quota source; refuse rather than guess."""
+    settings_path = _with_status_line(tmp_path, 'sh -c "echo hi"')
+    original = _read(settings_path)
+
+    with pytest.raises(InstallationConflict, match="double quote"):
+        install_host("claude", home=tmp_path, python_executable="python", os_name="posix")
+
+    assert _read(settings_path) == original
+    assert not (tmp_path / ".claude" / "skills" / "landing").exists()
+
+
+def test_doctor_names_the_command_being_wrapped(tmp_path):
+    _with_status_line(tmp_path, "my-status")
+    install_host("claude", home=tmp_path, python_executable=sys.executable, os_name=os.name)
+    report = doctor_host("claude", home=tmp_path, live=False)
+
+    status_line = next(c for c in report["checks"] if c["name"] == "statusLine")
+    assert status_line["status"] == "ok"
+    assert "my-status" in status_line["detail"]
+
+
+def test_the_code_fence_is_converted_whatever_the_assets_line_endings(tmp_path):
+    """A CRLF asset must not silently ship a skill telling Windows users to run bash.
+
+    The conversion used to be a literal "```bash\\n..." match, which simply found
+    nothing on a CRLF asset and reported success.
+    """
+    from agent_landing.installation import _render_skill_asset
+
+    for newline in ("\n", "\r\n"):
+        asset = f"```bash{newline}landing invoke \"$ARGUMENTS\" --provider codex{newline}```{newline}"
+        rendered = _render_skill_asset(
+            asset.encode("utf-8"), host="codex", python_executable="C:/py/python.exe", os_name="nt"
+        ).decode("utf-8")
+        assert "```powershell" in rendered, repr(newline)
+        assert "```bash" not in rendered, repr(newline)
+
+
+def _record_reading(home: Path, provider: str, age_seconds: float) -> None:
+    """Write the state a working quota path would have left behind."""
+    root = home / ".landing"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "latest_snapshot.json").write_text(
+        json.dumps({
+            "provider": provider,
+            "windows": [{"id": "five_hour", "used_percent": 20.0, "remaining_percent": 80.0}],
+            "sampled_at": time.time() - age_seconds,
+            "unreadable_windows": [],
+        }),
+        encoding="utf-8",
+    )
+
+
+def _doctor(home: Path) -> dict:
+    """Doctor pinned at the fake home's state root, never the developer's real one."""
+    return doctor_host("claude", home=home, live=False, state_root=home / ".landing")
+
+
+def _quota_source(report: dict) -> dict:
+    return next(c for c in report["checks"] if c["name"] == "quota_source")
+
+
+def test_doctor_reports_a_quota_path_that_has_never_delivered(tmp_path):
+    """Wired is not the same as working.
+
+    On a Claude Code surface that renders no status line the hooks still run, so
+    every configuration check passes while the quota path is dead. That state has
+    to be visible, or the budget is silently unguarded.
+    """
+    install_host("claude", home=tmp_path, python_executable=sys.executable, os_name=os.name)
+    report = _doctor(tmp_path)
+
+    check = _quota_source(report)
+    assert check["status"] == "pending"
+    assert "status line" in check["detail"]
+    # Never an error: a fresh install legitimately has no reading yet.
+    assert report["status"] == "ok"
+
+
+def test_doctor_is_satisfied_by_a_recent_reading(tmp_path):
+    install_host("claude", home=tmp_path, python_executable=sys.executable, os_name=os.name)
+    _record_reading(tmp_path, "claude", age_seconds=120)
+    assert _quota_source(_doctor(tmp_path))["status"] == "ok"
+
+
+def test_doctor_flags_a_quota_path_that_stopped_delivering(tmp_path):
+    install_host("claude", home=tmp_path, python_executable=sys.executable, os_name=os.name)
+    _record_reading(tmp_path, "claude", age_seconds=3 * 24 * 3600)
+
+    report = _doctor(tmp_path)
+    assert _quota_source(report)["status"] == "stale"
+    # Surfaced, but not a failure: the install itself is still correct.
+    assert report["status"] == "ok"
+
+
+def test_one_hosts_readings_do_not_vouch_for_the_other(tmp_path):
+    """Both hosts share one state root, so the check must match on provider."""
+    install_host("claude", home=tmp_path, python_executable=sys.executable, os_name=os.name)
+    _record_reading(tmp_path, "codex", age_seconds=60)
+    assert _quota_source(_doctor(tmp_path))["status"] == "pending"
+
+
+def test_doctor_does_not_create_the_state_directory(tmp_path):
+    """A diagnostic that reports on state must not manufacture it."""
+    install_host("claude", home=tmp_path, python_executable=sys.executable, os_name=os.name)
+    _doctor(tmp_path)
+    assert not (tmp_path / ".landing").exists()
+
+
+def test_invalid_existing_json_is_never_overwritten(tmp_path):
+    config_path = tmp_path / ".codex" / "hooks.json"
+    config_path.parent.mkdir()
+    config_path.write_text("{broken", encoding="utf-8")
+
+    with pytest.raises(InstallationConflict, match="valid JSON"):
+        install_host("codex", home=tmp_path, python_executable="python", os_name="posix")
+
+    assert config_path.read_text(encoding="utf-8") == "{broken"
+    assert not (tmp_path / ".agents" / "skills" / "landing").exists()
+
+
+def test_uninstall_removes_only_landing_owned_content(tmp_path):
+    install_host("codex", home=tmp_path, python_executable="python", os_name="posix")
+    config_path = tmp_path / ".codex" / "hooks.json"
+    config = _read(config_path)
+    config["hooks"]["PreToolUse"].insert(
+        0, {"matcher": "read_file", "hooks": [{"type": "command", "command": "keep-me"}]}
+    )
+    config["custom"] = 7
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+
+    result = uninstall_host("codex", home=tmp_path)
+    remaining = _read(config_path)
+
+    assert result["status"] == "uninstalled"
+    assert remaining["custom"] == 7
+    assert _commands(remaining, "PreToolUse") == ["keep-me"]
+    assert "PostToolUse" not in remaining["hooks"]
+    assert "UserPromptSubmit" not in remaining["hooks"]
+    assert not (tmp_path / ".agents" / "skills" / "landing").exists()
+
+
+def test_uninstall_does_not_delete_unowned_skill_directory(tmp_path):
+    skill = tmp_path / ".agents" / "skills" / "landing"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("mine", encoding="utf-8")
+
+    result = uninstall_host("codex", home=tmp_path)
+
+    assert result["status"] == "not_installed"
+    assert (skill / "SKILL.md").read_text(encoding="utf-8") == "mine"
+
+
+def test_fake_ownership_marker_neither_allows_overwrite_nor_deletion(tmp_path):
+    skill = tmp_path / ".agents" / "skills" / "landing"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("mine", encoding="utf-8")
+    (skill / ".landing-install.json").write_text(
+        json.dumps({"owner": "someone-else", "host": "codex", "format": 1}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InstallationConflict, match="not owned"):
+        install_host("codex", home=tmp_path, python_executable="python", os_name="posix")
+    result = uninstall_host("codex", home=tmp_path)
+
+    assert result["status"] == "not_installed"
+    assert (skill / "SKILL.md").read_text(encoding="utf-8") == "mine"
+
+
+def test_manual_skill_with_extra_files_is_not_adopted(tmp_path):
+    source = Path(__file__).parents[1] / "src" / "agent_landing" / "assets" / "codex" / "landing"
+    skill = tmp_path / ".agents" / "skills" / "landing"
+    skill.parent.mkdir(parents=True)
+    shutil.copytree(source, skill)
+    (skill / "extra.txt").write_text("not Landing", encoding="utf-8")
+
+    with pytest.raises(InstallationConflict, match="not owned"):
+        install_host("codex", home=tmp_path, python_executable="python", os_name="posix")
+
+
+def test_install_adopts_an_identical_manual_skill_copy(tmp_path):
+    source = Path(__file__).parents[1] / "src" / "agent_landing" / "assets" / "codex" / "landing"
+    skill = tmp_path / ".agents" / "skills" / "landing"
+    skill.parent.mkdir(parents=True)
+    shutil.copytree(source, skill)
+
+    result = install_host("codex", home=tmp_path, python_executable="python", os_name="posix")
+
+    assert result["status"] == "installed"
+    assert (skill / ".landing-install.json").is_file()
+
+
+def test_doctor_reports_complete_static_install(tmp_path):
+    install_host("claude", home=tmp_path, python_executable=sys.executable, os_name=os.name)
+
+    result = doctor_host("claude", home=tmp_path, live=False)
+
+    assert result["status"] == "ok"
+    # `quota_source` is excluded on purpose: it reports whether a quota reading
+    # has ever arrived, which a just-installed host cannot have yet. Every check
+    # that is actually about the installation must be ok.
+    install_checks = [c for c in result["checks"] if c["name"] != "quota_source"]
+    assert all(check["status"] == "ok" for check in install_checks)
+
+
+def test_doctor_reports_a_stale_installed_skill(tmp_path):
+    install_host("claude", home=tmp_path, python_executable=sys.executable, os_name=os.name)
+    (tmp_path / ".claude" / "skills" / "landing" / "SKILL.md").write_text(
+        "stale", encoding="utf-8"
+    )
+
+    result = doctor_host("claude", home=tmp_path, live=False)
+
+    assert result["status"] == "error"
+    assert any(check["name"] == "skill_content" and check["status"] == "error" for check in result["checks"])
+
+
+def test_doctor_reports_hooks_that_point_at_an_old_python_runtime(tmp_path):
+    install_host("claude", home=tmp_path, python_executable="C:/old/python.exe", os_name=os.name)
+
+    result = doctor_host("claude", home=tmp_path, live=False)
+
+    assert result["status"] == "error"
+    assert any(check["name"] == "hook_runtime" and check["status"] == "error" for check in result["checks"])
+
+
+def test_cli_install_doctor_and_uninstall_use_the_requested_home(tmp_path, capsys):
+    parser = build_parser()
+    install_args = parser.parse_args(["install", "--host", "claude", "--home", str(tmp_path)])
+    assert install_args.func(install_args) == 0
+    installed = json.loads(capsys.readouterr().out)
+    assert installed["results"][0]["status"] == "installed"
+    assert installed["message"].startswith("Landing is ready.")
+
+    doctor_args = parser.parse_args(
+        ["doctor", "--host", "claude", "--home", str(tmp_path), "--no-live"]
+    )
+    assert doctor_args.func(doctor_args) == 0
+    diagnosed = json.loads(capsys.readouterr().out)
+    assert diagnosed["results"][0]["status"] == "ok"
+
+    uninstall_args = parser.parse_args(["uninstall", "--host", "claude", "--home", str(tmp_path)])
+    assert uninstall_args.func(uninstall_args) == 0
+    removed = json.loads(capsys.readouterr().out)
+    assert removed["results"][0]["status"] == "uninstalled"
+
+
+def test_packaged_skills_match_the_repository_host_skills():
+    root = Path(__file__).parents[1]
+    pairs = [
+        (
+            root / ".agents" / "skills" / "landing" / "SKILL.md",
+            root / "src" / "agent_landing" / "assets" / "codex" / "landing" / "SKILL.md",
+        ),
+        (
+            root / ".agents" / "skills" / "landing" / "agents" / "openai.yaml",
+            root / "src" / "agent_landing" / "assets" / "codex" / "landing" / "agents" / "openai.yaml",
+        ),
+        (
+            root / ".claude" / "skills" / "landing" / "SKILL.md",
+            root / "src" / "agent_landing" / "assets" / "claude" / "landing" / "SKILL.md",
+        ),
+    ]
+    for source, packaged in pairs:
+        assert packaged.read_text(encoding="utf-8").splitlines() == source.read_text(
+            encoding="utf-8"
+        ).splitlines()

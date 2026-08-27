@@ -3,23 +3,34 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from time import time
 
 from .dashboard import serve_dashboard
 from .handoff import write_fallback_handoff
-from .hooks import evaluate_current, post_tool, pre_tool, renew_completed_segment, user_prompt
+from .hooks import (
+    evaluate_current,
+    post_tool,
+    pre_tool,
+    renew_completed_segment,
+    user_prompt,
+)
+from .installation import HOSTS, InstallationConflict, doctor_host, install_host, uninstall_host
 from .invocation import parse_invocation
 from .models import LandingConfig, LandingState, QuotaSnapshot, QuotaWindow, TaskSession
 from .policy import evaluate
 from .runway import estimate_runway
 from .providers import CodexAppServerProvider, parse_claude_statusline
-from .state import StateStore
+from .state import SCOPES, StateStore, adopt_project_state
 
 
 def _store(args: argparse.Namespace) -> StateStore:
-    return StateStore(getattr(args, "cwd", None) or os.getcwd())
+    return StateStore(
+        getattr(args, "cwd", None) or os.getcwd(),
+        scope=getattr(args, "state_scope", None),
+    )
 
 
 def _print_snapshot(snapshot: QuotaSnapshot) -> None:
@@ -30,8 +41,39 @@ def _print_snapshot(snapshot: QuotaSnapshot) -> None:
     print(" · ".join(parts) if parts else "quota unavailable")
 
 
+def _run_wrapped_status_line(command: str, raw_payload: str) -> str | None:
+    """Run the user's own status line command and return its output.
+
+    Claude Code has exactly one statusLine slot and exposes `rate_limits` there
+    and nowhere else, so Landing has to share it rather than take it. The command
+    receives the same payload Claude sent, because that is what it was written
+    against.
+    """
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            input=raw_payload,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        print(f"landing: wrapped status line failed: {error}", file=sys.stderr)
+        return None
+    if result.returncode != 0:
+        print(
+            f"landing: wrapped status line exited {result.returncode}: "
+            f"{(result.stderr or '').strip()}",
+            file=sys.stderr,
+        )
+        return None
+    return result.stdout.rstrip("\n")
+
+
 def cmd_claude_statusline(args: argparse.Namespace) -> int:
-    payload = json.load(sys.stdin)
+    raw_payload = sys.stdin.read()
+    payload = json.loads(raw_payload)
     snapshot = parse_claude_statusline(payload)
     store = _store(args)
     # Persist a reading that is entirely unreadable too. Keeping the previous good
@@ -39,6 +81,13 @@ def cmd_claude_statusline(args: argparse.Namespace) -> int:
     # is no longer reporting, with nothing telling the user it had gone blind.
     if snapshot.windows or snapshot.unreadable_windows:
         store.save_snapshot(snapshot)
+    if args.wrap:
+        wrapped = _run_wrapped_status_line(args.wrap, raw_payload)
+        if wrapped is not None:
+            print(wrapped)
+            return 0
+        # Fall through to Landing's own line: an empty status bar would read as
+        # Landing having broken the user's, and hide that quota is still being read.
     _print_snapshot(snapshot)
     return 0
 
@@ -51,6 +100,72 @@ def cmd_codex_snapshot(args: argparse.Namespace) -> int:
     else:
         _print_snapshot(snapshot)
     return 0
+
+
+def _requested_hosts(value: str) -> tuple[str, ...]:
+    return HOSTS if value == "all" else (value,)
+
+
+def _run_install_command(args: argparse.Namespace, action: str) -> int:
+    results = []
+    failed = False
+    for host in _requested_hosts(args.host):
+        try:
+            if action == "install":
+                result = install_host(
+                    host,
+                    home=args.home,
+                    python_executable=sys.executable,
+                    codex_executable=args.codex_executable,
+                )
+            elif action == "doctor":
+                result = doctor_host(
+                    host,
+                    home=args.home,
+                    live=not args.no_live,
+                    codex_executable=args.codex_executable or "codex",
+                )
+            else:
+                result = uninstall_host(host, home=args.home)
+        except (InstallationConflict, OSError) as error:
+            result = {"host": host, "status": "error", "error": str(error)}
+        failed = failed or result["status"] == "error"
+        results.append(result)
+    payload = {"command": action, "results": results}
+    if action == "install" and not failed:
+        payload["message"] = (
+            "Landing is ready.\n"
+            "Use it where you already work:\n"
+            "  Claude Code:  /landing leave 70 -- <task>\n"
+            "  Codex:        $landing leave 70 -- <task>\n"
+            "  Quick check:  landing status --compact\n"
+            "  Full status:  landing status"
+        )
+    print(json.dumps(payload, indent=2))
+    return 1 if failed else 0
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    # A budget written by an older version sits in the checkout it was started
+    # in. Carry it up to the user-level root rather than letting an upgrade look
+    # like the guard quietly forgetting the floor.
+    store = _store(args)
+    adopted = adopt_project_state(getattr(args, "cwd", None) or os.getcwd(), store.root)
+    if adopted:
+        print(
+            f"landing: adopted the budget left in {adopted} into {store.root}. "
+            "The original was left in place and can be deleted.",
+            file=sys.stderr,
+        )
+    return _run_install_command(args, "install")
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    return _run_install_command(args, "doctor")
+
+
+def cmd_uninstall(args: argparse.Namespace) -> int:
+    return _run_install_command(args, "uninstall")
 
 
 def _current_snapshot(args: argparse.Namespace, provider: str, store: StateStore) -> QuotaSnapshot:
@@ -526,9 +641,47 @@ def _add_budget_tuning_args(p: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="landing", description="Quota-budgeted graceful landing for coding agents")
     parser.add_argument("--cwd", help="project directory (defaults to current directory)")
+    parser.add_argument(
+        "--state-scope",
+        choices=list(SCOPES),
+        default=None,
+        help=(
+            "where the budget lives: 'user' (default) keeps one budget for the account, "
+            "'project' keeps one per checkout. Overrides LANDING_STATE_SCOPE; "
+            "LANDING_HOME still wins over both."
+        ),
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
+    p = sub.add_parser("install", help="install or update Landing for every project owned by this user")
+    p.add_argument("--host", choices=["all", *HOSTS], default="all")
+    p.add_argument("--home", help="override the user home directory (primarily for testing)")
+    p.add_argument("--codex-executable", help="path to Codex when it is not on PATH")
+    p.set_defaults(func=cmd_install)
+
+    p = sub.add_parser("doctor", help="verify the persistent skill, hooks, and Codex trust state")
+    p.add_argument("--host", choices=["all", *HOSTS], default="all")
+    p.add_argument("--home", help="override the user home directory (primarily for testing)")
+    p.add_argument("--codex-executable", help="path to Codex when it is not on PATH")
+    p.add_argument("--no-live", action="store_true", help="inspect files only; do not query Codex app-server")
+    p.set_defaults(func=cmd_doctor)
+
+    p = sub.add_parser("uninstall", help="remove only Landing-managed user-level files and settings")
+    p.add_argument("--host", choices=["all", *HOSTS], default="all")
+    p.add_argument("--home", help="override the user home directory (primarily for testing)")
+    p.set_defaults(func=cmd_uninstall, no_live=True, codex_executable=None)
+
     p = sub.add_parser("claude-statusline", help="ingest Claude Code statusLine JSON and display quota")
+    p.add_argument(
+        "--wrap",
+        default=None,
+        help=(
+            "your own status line command. Landing ingests quota from the payload, then runs "
+            "this with the same payload and prints its output instead of Landing's own line. "
+            "Claude Code has one statusLine slot and reports quota only there, so Landing "
+            "shares it rather than taking it."
+        ),
+    )
     p.set_defaults(func=cmd_claude_statusline)
 
     p = sub.add_parser("codex-snapshot", help="read Codex quota via app-server without a model turn")

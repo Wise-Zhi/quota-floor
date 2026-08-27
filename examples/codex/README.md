@@ -26,6 +26,11 @@ argument parser or whether its hooks are installed, trusted, and enforced.
 
 ## Install
 
+Normal users should run `landing install --host codex` once. It installs the
+skill and merges hooks at user scope for every project, including an absolute
+Codex Desktop path on Windows when `codex` is not on PATH. The manual steps
+below remain a development/reference path.
+
 Copy `hooks.json` to one of these, and replace the placeholder paths with real
 absolute ones:
 

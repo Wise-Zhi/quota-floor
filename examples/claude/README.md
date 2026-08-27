@@ -1,5 +1,9 @@
 # Claude Code integration
 
+Normal users should run `landing install --host claude` once. It installs the
+skill and merges these settings at user scope for every project. The file in
+this directory is a manual development/reference example.
+
 Merge `settings.json` into a Claude Code settings file rather than overwriting an
 existing one.
 
