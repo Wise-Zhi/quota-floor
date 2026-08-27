@@ -137,8 +137,8 @@ def _run_install_command(args: argparse.Namespace, action: str) -> int:
         payload["message"] = (
             "Landing is ready.\n"
             "Use it where you already work:\n"
-            "  Claude Code:  /landing leave 70 -- <task>\n"
-            "  Codex:        $landing leave 70 -- <task>\n"
+            "  Claude Code:  /landing leave 70 <task>\n"
+            "  Codex:        $landing leave 70 <task>\n"
             "  Quick check:  landing status --compact\n"
             "  Full status:  landing status"
         )
@@ -845,7 +845,7 @@ def build_parser() -> argparse.ArgumentParser:
         "invoke",
         help="parse a raw /landing or $landing invocation and start the budget (refuses on typos)",
     )
-    p.add_argument("arguments", help="the raw argument string, e.g. \"weekly 70 -- fix the tests\"")
+    p.add_argument("arguments", help="the raw argument string, e.g. \"leave weekly 70 fix the tests\"")
     p.add_argument("--provider", choices=["claude", "codex"], required=True)
     _add_budget_tuning_args(p)
     p.set_defaults(func=cmd_invoke)

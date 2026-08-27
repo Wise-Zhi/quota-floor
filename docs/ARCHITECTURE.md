@@ -34,7 +34,7 @@ Parses `/landing` and `$landing` invocations deterministically, outside the mode
 
 Parsing used to happen inside the model, which made it nondeterministic, cost tokens, and let a typo fail *silently* into the wrong floor. Both hosts now call one function, so they cannot disagree about what an invocation means.
 
-The syntax is `(leave|spend) [weekly|5h] <percent> -- <task>`. One of `leave`/`spend` is **required**: a bare number is refused rather than defaulted, because with a default, dropping the keyword from `spend 15` would leave `15` as a still-legal invocation meaning "leave 15" — authorizing 76 points of spend instead of 15. The governing rule is that *the absence of a marker must not itself be a valid, dangerous meaning*.
+The syntax is `(leave|spend) [weekly|5h] <percent> <task>`. One of `leave`/`spend` is **required**: a bare number is refused rather than defaulted, because with a default, dropping the keyword from `spend 15` would leave `15` as a still-legal invocation meaning "leave 15" — authorizing 76 points of spend instead of 15. The governing rule is that *the absence of a marker must not itself be a valid, dangerous meaning*. The legacy `--` task separator remains accepted for compatibility but is not part of the user-facing syntax.
 
 Anything ambiguous is refused, never guessed, and a refusal never creates a session. Suggestions are offered as text only and are themselves valid syntax.
 

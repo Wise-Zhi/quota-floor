@@ -16,12 +16,12 @@ from typing import Any
 #: The window token is optional: `auto` picks the right one per plan, and landing
 #: feasibility is checked on every window regardless. It stays in the syntax
 #: because it still works and hiding a working option only makes it undiscoverable.
-SYNTAX = "/landing (leave|spend) [weekly|5h] <percent> -- <task>"
+SYNTAX = "/landing (leave|spend) [weekly|5h] <percent> <task>"
 
 EXAMPLES = (
-    "/landing leave 70 -- refactor auth and add tests",
-    "/landing spend 15 -- fix the failing checkout tests",
-    "/landing leave 5h 30 -- investigate the flaky integration test",
+    "/landing leave 70 refactor auth and add tests",
+    "/landing spend 15 fix the failing checkout tests",
+    "/landing leave 5h 30 investigate the flaky integration test",
 )
 
 #: `leave` and `spend` are opposite readings of the same number, and neither is
@@ -144,7 +144,7 @@ def _suggest_from(tokens: list[str]) -> str | None:
     for token in tokens:
         digits = re.sub(r"[^\d.]", "", token.replace("O", "0").replace("o", "0"))
         if digits and _FLOOR.match(digits) and 0 <= float(digits) <= 100:
-            return f"/landing leave {float(digits):g} -- <task>"
+            return f"/landing leave {float(digits):g} <task>"
     return None
 
 
@@ -188,7 +188,7 @@ def _trailing_options(tokens: list[str]) -> tuple[list[str], list[str]]:
 def _split_options_and_task(tokens: list[str]) -> tuple[list[str], list[str]]:
     """Locate the settings group, which may sit before or after the task.
 
-    "leave 70 -- fix the tests" and "fix the tests leave 70" are both natural
+    "leave 70 fix the tests" and "fix the tests leave 70" are both natural
     ways to say the same thing, and GNU-style tools permute options and operands
     freely, so both are accepted. Settings before the task win when both ends
     could be read as a group, which keeps the documented form authoritative.
@@ -257,7 +257,7 @@ def parse_invocation(raw: str) -> ParsedInvocation:
     if len(set(modes)) > 1:
         return _fail(
             "'leave' and 'spend' mean opposite things and cannot both be given.",
-            f"/landing leave {floors[0]:g} -- <task>",
+            f"/landing leave {floors[0]:g} <task>",
         )
 
     percent = floors[0]
@@ -273,9 +273,9 @@ def parse_invocation(raw: str) -> ParsedInvocation:
         return _fail(
             f"say whether {percent:g} is quota to leave or quota to spend.",
             alternatives=[
-                f"/landing leave {window_word}{percent:g} -- {tail}"
+                f"/landing leave {window_word}{percent:g} {tail}"
                 f"   (stop while {percent:g}% still remains)",
-                f"/landing spend {window_word}{percent:g} -- {tail}"
+                f"/landing spend {window_word}{percent:g} {tail}"
                 f"   (spend at most {percent:g} percentage points)",
             ],
         )
@@ -286,7 +286,7 @@ def parse_invocation(raw: str) -> ParsedInvocation:
         mode_word = "spend" if mode == "max_spend" else "leave"
         return _fail(
             "no task was given after the quota settings.",
-            f"/landing {mode_word} {percent:g} -- <describe the task here>",
+            f"/landing {mode_word} {percent:g} <describe the task here>",
         )
 
     return ParsedInvocation(

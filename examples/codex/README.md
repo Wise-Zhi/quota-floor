@@ -17,7 +17,7 @@ The **Agent Landing** row shown while searching in the Codex composer is an
 autocomplete candidate, not a persistent argument hint. On the verified build,
 pressing Space while the row is visible dismisses it without selecting the
 skill. Select the candidate first; the configured editable starter is
-`Use $landing leave 75 -- <task>`.
+`Use $landing leave 75 <task>`.
 
 The same build's `skills/list` result exposes `shortDescription` and
 `defaultPrompt` for the skill, but no persistent `argumentHint` field. Treat
@@ -171,7 +171,7 @@ none it refuses with a readable message rather than a traceback. Point it at the
 binary directly:
 
 ```bash
-landing invoke "leave 70 -- refactor auth" --provider codex --executable /path/to/codex
+landing invoke "leave 70 refactor auth" --provider codex --executable /path/to/codex
 ```
 
 On Windows the binary lives under a content-hashed directory that **rotates on

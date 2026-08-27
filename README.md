@@ -40,22 +40,22 @@ Example: the user says **"implement OAuth, but leave me 70% weekly quota."** If 
 Landing should feel native to the coding agent. There is no required standalone app. The primary entrypoint is simply **`landing`**:
 
 ```text
-Claude Code:  /landing leave 70 -- refactor auth and add tests
-Codex:        $landing leave 70 -- refactor auth and add tests
+Claude Code:  /landing leave 70 refactor auth and add tests
+Codex:        $landing leave 70 refactor auth and add tests
 Terminal:      landing status
 ```
 
 Claude Code shows the expected format directly in slash-command autocomplete:
 
 ```text
-/landing (leave|spend) [weekly|5h] <percent> -- <task>
+/landing (leave|spend) [weekly|5h] <percent> <task>
 ```
 
 Codex's composer works differently. The **Agent Landing** row is an
 autocomplete candidate, not a persistent argument hint. Verified on Codex
 `0.149.0-alpha.4.3`: pressing Space while that row is visible dismisses it
 without selecting the skill. Select the row first; Codex can then apply the
-configured editable starter, `Use $landing leave 75 -- <task>`. The current
+configured editable starter, `Use $landing leave 75 <task>`. The current
 `skills/list` interface exposes `shortDescription` and `defaultPrompt`, but no
 persistent `argumentHint`, so Landing cannot keep the candidate row visible
 after Space.
@@ -68,14 +68,14 @@ after Space.
 - `--` is optional; the first word that is not a keyword, window, or number
   starts the task.
 - The settings may come **before or after** the task, whichever reads more
-  naturally: `leave 70 -- fix the tests` and `fix the tests leave 70` are the
+  naturally: `leave 70 fix the tests` and `fix the tests leave 70` are the
   same request. A trailing group is only recognized when it is complete (a
   keyword plus a number), so a number or the word `leave` occurring inside the
   task text is never mistaken for settings.
 
-For example: `/landing leave 75 -- fix the checkout tests`. In Codex, select
+For example: `/landing leave 75 fix the checkout tests`. In Codex, select
 **Agent Landing** before typing arguments; its editable starter is
-`Use $landing leave 75 -- <task>`.
+`Use $landing leave 75 <task>`.
 
 Invocations are parsed by `landing invoke`, not by the model, so both hosts agree
 and a typo is refused instead of silently starting an unguarded task.
@@ -93,8 +93,8 @@ The installer prints this once after setup:
 ```text
 Landing is ready.
 Use it where you already work:
-  Claude Code:  /landing leave 70 -- <task>
-  Codex:        $landing leave 70 -- <task>
+  Claude Code:  /landing leave 70 <task>
+  Codex:        $landing leave 70 <task>
   Quick check:  landing status --compact
   Full status:  landing status
 ```

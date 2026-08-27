@@ -12,7 +12,7 @@ The syntax row in the Codex composer is an autocomplete candidate, not a
 persistent argument hint. Select **Agent Landing** before entering arguments;
 pressing Space while the candidate is merely visible dismisses it on Codex
 `0.149.0-alpha.4.3`. The configured editable starter is
-`Use $landing leave 75 -- <task>`. This composer behavior does not change the
+`Use $landing leave 75 <task>`. This composer behavior does not change the
 parser rules below.
 
 ## Do not parse the arguments yourself
@@ -46,7 +46,7 @@ starting none at all: either way the number guarding their quota is not theirs.
 ## Syntax
 
 ```text
-$landing (leave|spend) [weekly|5h] <percent> -- <task>
+$landing (leave|spend) [weekly|5h] <percent> <task>
 ```
 
 - `leave 70` — stop while at least **70% remains**.
@@ -55,10 +55,9 @@ $landing (leave|spend) [weekly|5h] <percent> -- <task>
   dropped keyword would otherwise stay a legal invocation carrying the opposite
   meaning: `spend 15` degrading to `15` would authorize 76 points of spend
   instead of 15, with nothing to catch it.
-- `--` is optional; the first word that is neither a keyword, a window, nor a
-  number starts the task.
+- The first word that is neither a keyword, a window, nor a number starts the task.
 - The settings may come **before or after** the task, whichever reads more
-  naturally: `leave 70 -- fix the tests` and `fix the tests leave 70` are the
+  naturally: `leave 70 fix the tests` and `fix the tests leave 70` are the
   same request. A trailing group is only recognized when it is complete (a
   keyword plus a number), so a number or the word `leave` occurring inside the
   task text is never mistaken for settings.
@@ -71,10 +70,10 @@ $landing (leave|spend) [weekly|5h] <percent> -- <task>
 
 Examples:
 
-- `$landing leave 70 -- refactor auth and add tests`
-- `$landing spend 15 -- fix the failing checkout tests`
-- `$landing leave 30 fix the checkout tests`   (the `--` is optional)
-- `$landing leave 5h 30 -- investigate the flaky test`   (pin the floor to one window)
+- `$landing leave 70 refactor auth and add tests`
+- `$landing spend 15 fix the failing checkout tests`
+- `$landing leave 30 fix the checkout tests`
+- `$landing leave 5h 30 investigate the flaky test`   (pin the floor to one window)
 
 ## While working
 

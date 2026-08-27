@@ -32,7 +32,7 @@ landing simulate --start 100 --leave 70 --burn 0.5,0.7,0.6 --step 2
 Start a fake task with ample quota:
 
 ```bash
-landing invoke "leave 75 -- early completion test" --provider claude
+landing invoke "leave 75 early completion test" --provider claude
 ```
 
 Then complete it before reaching the floor:
@@ -248,7 +248,7 @@ Test composer discovery separately from hook enforcement:
    `0.149.0-alpha.4.3`, the row disappears because it was an autocomplete
    candidate, not a persistent argument hint.
 4. Select Agent Landing first and confirm that Codex offers the configured
-   editable `defaultPrompt`: `Use $landing leave 75 -- <task>`.
+   editable `defaultPrompt`: `Use $landing leave 75 <task>`.
 5. Use `skills/list` to capture the interface fields returned by the host. On
    the verified build it returns `shortDescription` and `defaultPrompt`, but no
    persistent `argumentHint` field.

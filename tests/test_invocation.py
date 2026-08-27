@@ -2,7 +2,13 @@
 
 import pytest
 
-from agent_landing.invocation import parse_invocation
+from agent_landing.invocation import EXAMPLES, SYNTAX, parse_invocation
+
+
+def test_public_syntax_does_not_teach_the_optional_double_dash():
+    """The task separator is accepted for compatibility, not taught to users."""
+    assert "--" not in SYNTAX
+    assert all("--" not in example for example in EXAMPLES)
 
 
 @pytest.mark.parametrize("raw, window, mode, percent, task", [
