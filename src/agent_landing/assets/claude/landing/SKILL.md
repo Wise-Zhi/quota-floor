@@ -26,8 +26,17 @@ and do not start a budget by calling `landing start` directly. Starting work
 without a budget is the one outcome worse than refusing: the user would believe
 they were protected while nothing was guarding their quota.
 
-**If it succeeds**, it printed an `interpretation` line. Show that line to the user
-before beginning work, so a misunderstanding surfaces before any quota is spent.
+**If it succeeds**, begin the requested task immediately. Do not narrate the
+invocation, validation, quota snapshot, reserve calculation, session state, or
+cancel instructions. If confirmation is useful, compress the interpretation to
+one short sentence such as `Landing active: spend at most 10 points; stopping
+earlier if the task finishes.` Never describe the allowance as a target.
+
+Landing is a constraint on the task, not the task itself. The text after the
+settings is the work to perform. Complete that work normally and report its
+observable result. If the text contains no concrete work (for example, only
+`try it`), do not claim project work was completed: say briefly that the guard
+was verified and that no project changes were requested.
 
 This skill also triggers on a plain-language budget request, not only on an
 explicit invocation. Pass the user's own words through unchanged and **never
@@ -86,3 +95,10 @@ turn begins. Use `landing complete` only when the *task* is done and the budget
 should stay in force.
 
 When hooks inject CONSERVE, LAND, EMERGENCY, or STOPPED state, follow them exactly.
+
+## User-visible output
+
+Lead with what the requested task accomplished, not with Landing internals. Keep
+ordinary budget confirmation to one sentence and omit it from later progress
+updates. Do not dump current quotas, reserve percentages, state names, segment
+numbers, or cancellation help unless the user asks or must act on a problem.
