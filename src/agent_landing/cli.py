@@ -21,7 +21,7 @@ from .hooks import (
 from .installation import HOSTS, InstallationConflict, doctor_host, install_host, uninstall_host
 from .invocation import parse_invocation
 from .models import LandingConfig, LandingState, QuotaSnapshot, QuotaWindow, TaskSession
-from .policy import evaluate
+from .policy import evaluate, window_floor, window_pressure
 from .runway import estimate_runway
 from .providers import CodexAppServerProvider, parse_claude_statusline
 from .state import SCOPES, CorruptStateError, StateStore, adopt_project_state
@@ -294,24 +294,6 @@ def cmd_start(args: argparse.Namespace) -> int:
     if floor > remaining:
         raise SystemExit(f"Requested floor {floor:.1f}% is above current remaining quota {remaining:.1f}%")
 
-    # The floor is a limit on every window, so a window already at or below it
-    # puts the budget in violation the moment it starts. Refusing here beats
-    # opening a session that immediately demands an emergency landing, and it
-    # surfaces the real situation while it is still free to act on.
-    if floor_everywhere:
-        mode_word = "spend" if mode == "max_spend" else "leave"
-        shown = max_spend if mode == "max_spend" and max_spend is not None else floor
-        breached = [w for w in snapshot.windows if w.remaining_percent <= floor]
-        if breached:
-            detail = ", ".join(f"{w.id} at {w.remaining_percent:.1f}%" for w in breached)
-            raise SystemExit(
-                f"Requested floor {floor:.1f}% has already been reached on {detail}. "
-                "The floor applies to every quota window your plan exposes. Either lower "
-                f"the floor, or scope it to one window: --window {args.window}, or "
-                f"`{mode_word} {_WINDOW_WORD.get(args.window, args.window)} {shown:g}` "
-                "in a /landing invocation."
-            )
-
     config = LandingConfig(
         min_reserve_percent=args.min_reserve,
         default_reserve_percent=args.default_reserve,
@@ -339,6 +321,42 @@ def cmd_start(args: argparse.Namespace) -> int:
             w.id: w.remaining_percent for w in snapshot.windows
         },
     )
+
+    # The floor is a limit on every window, so a window already at or below it
+    # puts the budget in violation the moment it starts. Refusing here beats
+    # opening a session that immediately demands an emergency landing, and it
+    # surfaces the real situation while it is still free to act on.
+    #
+    # Each window is asked the same question the gate would ask on the first tool
+    # call, through the same two functions, so the pre-flight check and the guard
+    # cannot disagree. Comparing every window against the one absolute number
+    # derived from the budget window was wrong for `spend`, which is a per-window
+    # delta: with the five-hour window normally further burned than the weekly
+    # one, an ordinary `spend 15` was refused outright.
+    if floor_everywhere:
+        mode_word = "spend" if mode == "max_spend" else "leave"
+        shown = max_spend if mode == "max_spend" and max_spend is not None else floor
+        breached = []
+        for w in snapshot.windows:
+            limit = window_floor(session, w.id)
+            state, _ = window_pressure(
+                w.id, w.remaining_percent, limit, config.default_reserve_percent, config
+            )
+            if state == LandingState.EMERGENCY:
+                breached.append((w, limit))
+        if breached:
+            detail = ", ".join(
+                f"{w.id} at {w.remaining_percent:.1f}% (floor {limit:.1f}%)"
+                for w, limit in breached
+            )
+            raise SystemExit(
+                f"The requested floor has already been reached on {detail}. "
+                "The floor applies to every quota window your plan exposes. Either lower "
+                f"the floor, or scope it to one window: --window {args.window}, or "
+                f"`{mode_word} {_WINDOW_WORD.get(args.window, args.window)} {shown:g}` "
+                "in a /landing invocation."
+            )
+
     store.save_session(session)
     store.save_snapshot(snapshot)
     decision = evaluate(session, remaining)

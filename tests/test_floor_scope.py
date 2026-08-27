@@ -60,6 +60,51 @@ def test_a_floor_already_breached_on_another_window_is_refused(tmp_path):
     assert "leave weekly 70" in message
 
 
+def test_spend_is_measured_per_window_by_the_preflight_check(tmp_path, capsys):
+    """`spend N` is a delta on each window, not one absolute floor for all of them.
+
+    The five-hour window is normally further burned than the weekly one, so
+    comparing every window against the floor derived from the *budget* window
+    refused ordinary `spend` invocations: with weekly at 90% and five-hour at
+    20%, `spend 15` was rejected because five-hour sat below 90-15=75.
+    """
+    seed(tmp_path, five_hour=20.0, seven_day=90.0)
+    argv = ["--cwd", str(tmp_path), "start", "--provider", "claude", "--spend", "15",
+            "--task", "t"]
+    args = build_parser().parse_args(argv)
+    assert args.func(args) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["floor_applies_to"] == ["five_hour", "seven_day"]
+
+    from agent_landing.policy import window_floor
+    session = StateStore(tmp_path).load_session()
+    # 15 points off where each window actually stood, not 75% everywhere.
+    assert window_floor(session, "five_hour") == 5.0
+    assert window_floor(session, "seven_day") == 75.0
+
+
+def test_spend_is_still_refused_when_a_window_cannot_afford_it(tmp_path):
+    """Per-window does not mean unchecked: a window at its own floor still refuses."""
+    seed(tmp_path, five_hour=0.5, seven_day=90.0)
+    argv = ["--cwd", str(tmp_path), "start", "--provider", "claude", "--spend", "15",
+            "--task", "t"]
+    args = build_parser().parse_args(argv)
+    with pytest.raises(SystemExit) as excinfo:
+        args.func(args)
+    assert "five_hour at 0.5%" in str(excinfo.value)
+
+
+def test_a_refused_start_leaves_no_session_behind(tmp_path):
+    """A refusal must not create the budget it just refused to create."""
+    seed(tmp_path, five_hour=55.0, seven_day=99.0)
+    argv = ["--cwd", str(tmp_path), "start", "--provider", "claude", "--leave", "70",
+            "--task", "t"]
+    args = build_parser().parse_args(argv)
+    with pytest.raises(SystemExit):
+        args.func(args)
+    assert StateStore(tmp_path).load_session() is None
+
+
 def test_scoping_the_floor_to_one_window_is_the_escape_hatch(tmp_path, capsys):
     seed(tmp_path, five_hour=55.0, seven_day=99.0)
     argv = ["--cwd", str(tmp_path), "start", "--provider", "claude", "--window", "seven_day",
