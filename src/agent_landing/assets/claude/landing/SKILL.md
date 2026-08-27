@@ -8,6 +8,19 @@ version: 0.1.0
 
 Use Agent Landing for this task.
 
+## Start with the task, not the guard
+
+Any user-visible progress message must describe only the real work requested.
+Never announce that you are reading this skill, checking Landing rules, parsing
+the budget, validating quota, or setting up the guard. If the host requires an
+opening update, use a task-only sentence such as `I’ll playtest the current build
+and report player-facing problems without changing code.` Then act immediately.
+
+When the budget must be mentioned, `spend N` means **spend at most N percentage
+points**. Never call it `N quota`, `N of quota`, an allowance to consume, or a
+target. Omit the number entirely when it does not help the user understand the
+task result.
+
 ## Do not parse the arguments yourself
 
 Pass the raw invocation straight through:
