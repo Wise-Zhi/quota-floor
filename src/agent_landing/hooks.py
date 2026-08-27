@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from time import time
@@ -9,7 +10,7 @@ from typing import Any
 from .handoff import landing_prompt, write_fallback_handoff
 from .models import LandingState, PolicyDecision, QuotaSnapshot, QuotaWindow, TaskSession
 from .policy import evaluate, unknown_quota_decision
-from .state import StateStore
+from .state import CorruptStateError, StateStore
 
 
 READ_ONLY_TOOLS = {"Read", "Glob", "Grep", "LS", "read_file", "list_dir", "search"}
@@ -40,6 +41,37 @@ def is_handoff_write(payload: dict[str, Any], session: TaskSession) -> bool:
     if not path:
         return False
     return Path(path).name == Path(session.handoff_path).name
+
+
+def _tool_failed(payload: dict[str, Any]) -> bool:
+    """Did the host report this tool call as failed?"""
+    response = payload.get("tool_response") or payload.get("toolResponse")
+    if not isinstance(response, dict):
+        return False
+    return (
+        response.get("success") is False
+        or response.get("is_error") is True
+        or bool(response.get("error"))
+    )
+
+
+def handoff_landed(payload: dict[str, Any], session: TaskSession) -> bool:
+    """Confirm the handoff really exists before calling the task landed.
+
+    `landed` is terminal and deliberately not renewable, so recording it for a
+    write that failed would end the budget with no handoff at all -- precisely
+    the outcome the landing reserve exists to prevent. The write tool reporting
+    success is not enough on its own; the file has to be on disk.
+    """
+    if not is_handoff_write(payload, session) or _tool_failed(payload):
+        return False
+    path = Path(_candidate_path(_tool_input(payload)) or session.handoff_path)
+    if not path.is_absolute():
+        path = Path(session.cwd) / path
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
 
 
 # An allowlisted prefix is worthless if the command can chain, redirect, or
@@ -86,16 +118,22 @@ def hook_json(decision: str | None = None, reason: str | None = None, context: s
     return {"hookSpecificOutput": specific}
 
 
-def renew_completed_segment(session: TaskSession) -> bool:
+def renew_completed_segment(session: TaskSession, cwd: str | None = None) -> bool:
     """Start a new task segment under the same floor after an early completion.
 
     The budget contract belongs to the user, not to one task: finishing a task
     must not silently drop the guard for whatever the user asks next. Only an
     early `landing complete` is renewable -- a landed or emergency stop means the
     quota itself ran out, and renewing there would defeat the floor.
+
+    The new segment adopts the directory the instruction came from. A budget is
+    per account, so consecutive segments can run in different checkouts, and an
+    emergency handoff has to land where the work actually is.
     """
     if not session.is_renewable:
         return False
+    if cwd:
+        session.cwd = str(Path(cwd).resolve())
     if session.task:
         session.previous_tasks = (session.previous_tasks + [session.task])[-10:]
     session.segment_count += 1
@@ -169,7 +207,65 @@ def evaluate_current(
     return session, decision
 
 
+#: Every denial names this, because a gate with no reachable exit is a trap. The
+#: agent is denied `landing cancel` on purpose -- it must never lift its own floor
+#: -- so the exit has to be something the *user* can do from wherever they are,
+#: which is the chat, not necessarily a terminal.
+CANCEL_HINT = (
+    "Type `/landing cancel` (Claude Code) or `$landing cancel` (Codex) as the whole "
+    "message to stand the guard down."
+)
+
+
+#: Shown when the gate cannot determine what it was asked to enforce. Names the
+#: three ways out, because a deny with no exit is its own kind of trap.
+UNREADABLE_STATE_REASON = (
+    "Quota guard: the budget state file could not be read, so the terms of the budget "
+    "are unknown. Work is blocked rather than continuing unguarded. Run `landing status` "
+    "for detail, or `landing start ...` to re-establish the budget. "
+    + CANCEL_HINT
+)
+
+
+def gate_failure(store: StateStore, error: BaseException) -> dict[str, Any]:
+    """Fail closed -- but only where a budget was actually requested.
+
+    A hook that raises exits non-zero, and Claude Code treats every exit code
+    other than 2 as a non-blocking error: the tool then runs anyway. So a crash
+    here silently un-guards the session, which is the failure this project
+    ranks below having no guard at all. Deny instead.
+
+    Where no session file exists there is no mandate to enforce, and blocking
+    the user's work over an internal error would be pure harm, so that case
+    stays out of the way exactly as it does on the healthy path.
+    """
+    if not store.session_path.exists():
+        return {}
+    reason = UNREADABLE_STATE_REASON
+    if not isinstance(error, CorruptStateError):
+        reason = (
+            "Quota guard: the budget could not be evaluated "
+            f"({type(error).__name__}: {error}). Work is blocked rather than continuing "
+            "unguarded. Run `landing status` for detail. " + CANCEL_HINT
+        )
+    return hook_json(decision="deny", reason=reason)
+
+
 def pre_tool(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
+    """Evaluate the gate for one tool call, serialized against concurrent hooks.
+
+    Unreadable state is answered here rather than left to the caller: the gate
+    failing open is the outcome this whole module exists to prevent, so it must
+    not depend on every call site remembering to catch.
+    """
+    with store.lock():
+        try:
+            return _pre_tool_locked(payload, store)
+        except CorruptStateError as error:
+            return gate_failure(store, error)
+
+
+def _pre_tool_locked(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
     # Deliberately does NOT renew a completed segment: a tool call cannot prove a
     # new user instruction, so renewing here would let the agent work straight
     # past `landing complete` and spend the budget it was told to return.

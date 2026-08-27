@@ -36,8 +36,47 @@ def test_land_blocks_new_write_but_allows_handoff(tmp_path):
 def test_post_handoff_stops_session(tmp_path):
     store = setup_store(tmp_path, 73.5)
     pre_tool({"tool_name": "Write", "tool_input": {"file_path": "src/new.py"}}, store)
+    (tmp_path / "AGENT_HANDOFF.md").write_text("# handoff", encoding="utf-8")
     post_tool({"tool_name": "Write", "tool_input": {"file_path": "AGENT_HANDOFF.md"}}, store)
     assert store.load_session().state == LandingState.STOPPED
+
+
+def test_a_handoff_write_that_produced_no_file_does_not_land_the_task(tmp_path):
+    """`landed` is terminal and not renewable, so it must not be recorded on a failed write.
+
+    Trusting the write tool's own report would end the budget with no handoff at
+    all -- the exact outcome the landing reserve exists to prevent.
+    """
+    store = setup_store(tmp_path, 73.5)
+    pre_tool({"tool_name": "Write", "tool_input": {"file_path": "src/new.py"}}, store)
+    post_tool({"tool_name": "Write", "tool_input": {"file_path": "AGENT_HANDOFF.md"}}, store)
+
+    session = store.load_session()
+    assert session.state == LandingState.LAND, "the guard stays up until the handoff exists"
+    assert session.stop_reason is None
+
+
+def test_a_handoff_write_the_host_reported_as_failed_does_not_land_the_task(tmp_path):
+    store = setup_store(tmp_path, 73.5)
+    pre_tool({"tool_name": "Write", "tool_input": {"file_path": "src/new.py"}}, store)
+    (tmp_path / "AGENT_HANDOFF.md").write_text("# stale from an earlier run", encoding="utf-8")
+    post_tool(
+        {
+            "tool_name": "Write",
+            "tool_input": {"file_path": "AGENT_HANDOFF.md"},
+            "tool_response": {"success": False, "error": "EACCES"},
+        },
+        store,
+    )
+    assert store.load_session().state == LandingState.LAND
+
+
+def test_an_empty_handoff_does_not_land_the_task(tmp_path):
+    store = setup_store(tmp_path, 73.5)
+    pre_tool({"tool_name": "Write", "tool_input": {"file_path": "src/new.py"}}, store)
+    (tmp_path / "AGENT_HANDOFF.md").write_text("", encoding="utf-8")
+    post_tool({"tool_name": "Write", "tool_input": {"file_path": "AGENT_HANDOFF.md"}}, store)
+    assert store.load_session().state == LandingState.LAND
 
 
 def test_emergency_writes_fallback(tmp_path):

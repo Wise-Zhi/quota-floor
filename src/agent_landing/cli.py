@@ -12,6 +12,7 @@ from .dashboard import serve_dashboard
 from .handoff import write_fallback_handoff
 from .hooks import (
     evaluate_current,
+    gate_failure,
     post_tool,
     pre_tool,
     renew_completed_segment,
@@ -23,7 +24,7 @@ from .models import LandingConfig, LandingState, QuotaSnapshot, QuotaWindow, Tas
 from .policy import evaluate
 from .runway import estimate_runway
 from .providers import CodexAppServerProvider, parse_claude_statusline
-from .state import SCOPES, StateStore, adopt_project_state
+from .state import SCOPES, CorruptStateError, StateStore, adopt_project_state
 
 
 def _store(args: argparse.Namespace) -> StateStore:
@@ -396,25 +397,50 @@ def _refresh_codex_if_needed(store: StateStore, max_age: float, executable: str)
 
 
 def cmd_hook_pre(args: argparse.Namespace) -> int:
+    """The gate. Always exits 0 and answers in JSON, including when it fails.
+
+    Raising here would exit non-zero, which Claude Code reads as a non-blocking
+    error and then runs the tool anyway -- a guard that crashes would silently
+    stop guarding. Every failure is turned into an explicit decision instead.
+    """
     store = _store(args)
-    if args.platform == "codex":
-        _refresh_codex_if_needed(store, args.refresh_after_seconds, args.executable)
-    payload = json.load(sys.stdin)
-    print(json.dumps(pre_tool(payload, store), separators=(",", ":")))
+    try:
+        if args.platform == "codex":
+            _refresh_codex_if_needed(store, args.refresh_after_seconds, args.executable)
+        payload = json.load(sys.stdin)
+        result = pre_tool(payload, store)
+    except Exception as error:  # noqa: BLE001 - the gate must never fail open
+        print(f"landing: gate error: {error}", file=sys.stderr)
+        result = gate_failure(store, error)
+    print(json.dumps(result, separators=(",", ":")))
     return 0
 
 
 def cmd_hook_post(args: argparse.Namespace) -> int:
     store = _store(args)
-    payload = json.load(sys.stdin)
-    print(json.dumps(post_tool(payload, store), separators=(",", ":")))
+    try:
+        payload = json.load(sys.stdin)
+        result = post_tool(payload, store)
+    except Exception as error:  # noqa: BLE001
+        # Fail *safe* rather than closed: this hook only ever ends a session, so
+        # doing nothing leaves the guard running instead of releasing it.
+        print(f"landing: post-tool hook error: {error}", file=sys.stderr)
+        result = {}
+    print(json.dumps(result, separators=(",", ":")))
     return 0
 
 
 def cmd_hook_user_prompt(args: argparse.Namespace) -> int:
     store = _store(args)
-    payload = json.load(sys.stdin)
-    print(json.dumps(user_prompt(payload, store), separators=(",", ":")))
+    try:
+        payload = json.load(sys.stdin)
+        result = user_prompt(payload, store)
+    except Exception as error:  # noqa: BLE001
+        # Fail safe for the same reason: this hook only renews a segment, so
+        # skipping it keeps the previous task stopped rather than reopening it.
+        print(f"landing: user-prompt hook error: {error}", file=sys.stderr)
+        result = {}
+    print(json.dumps(result, separators=(",", ":")))
     return 0
 
 
@@ -424,7 +450,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
     session = store.load_session()
     if not session:
         raise SystemExit("No quota-budgeted task to resume.")
-    if not renew_completed_segment(session):
+    if not renew_completed_segment(session, cwd=getattr(args, "cwd", None) or os.getcwd()):
         raise SystemExit(
             f"Session is {session.state.value} (reason: {session.stop_reason or 'n/a'}) and is not "
             "renewable. Only a task that finished early can start a new segment; a landed or "
@@ -550,14 +576,29 @@ def cmd_complete(args: argparse.Namespace) -> int:
 def cmd_cancel(args: argparse.Namespace) -> int:
     """End the budget contract entirely and stand the guard down."""
     store = _store(args)
-    session = store.load_session()
+    try:
+        session = store.load_session()
+    except CorruptStateError as error:
+        # Cancel is the documented way out of a denied gate, so it has to work on
+        # exactly the state that caused the denial. Quarantining the unreadable
+        # file leaves no session, which is what standing the guard down means.
+        quarantined = store.quarantine_session()
+        print(json.dumps({
+            "state": "cancelled",
+            "quarantined_state_file": str(quarantined) if quarantined else None,
+            "message": (
+                f"The budget state file was unreadable ({error}); it was moved aside and the "
+                "guard has stood down. Tool use is unrestricted. Start a new budget to be "
+                "guarded again."
+            ),
+        }, indent=2))
+        return 0
     if not session:
         raise SystemExit("No quota-budgeted task to cancel.")
     if session.is_cancelled:
         print(json.dumps({"state": "cancelled", "message": "Budget was already cancelled."}, indent=2))
         return 0
-    session.state = LandingState.STOPPED
-    session.stop_reason = "cancelled"
+    cancel_session(session)
     store.save_session(session)
     print(json.dumps({
         "state": "cancelled",
@@ -798,7 +839,18 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    return int(args.func(args))
+    try:
+        return int(args.func(args))
+    except CorruptStateError as error:
+        # The hooks answer this themselves; every other command reports it as a
+        # refusal with a way out rather than as a traceback.
+        print(
+            f"landing: {error}\n"
+            "The budget's terms cannot be recovered. Run `landing cancel` to move the file "
+            "aside and stand the guard down, or `landing start ...` to establish a new budget.",
+            file=sys.stderr,
+        )
+        return 1
 
 
 if __name__ == "__main__":
