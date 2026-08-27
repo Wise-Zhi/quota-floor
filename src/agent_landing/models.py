@@ -147,8 +147,8 @@ class TaskSession:
     config: LandingConfig = field(default_factory=LandingConfig)
     stop_reason: str | None = None
     completed_at_remaining_percent: float | None = None
-    # The budget contract outlives any single task. Each completed task starts a
-    # new segment under the same floor rather than releasing the guard.
+    # Kept for backwards-compatible state loading. New budgets are one task each
+    # and therefore remain segment 1.
     segment_count: int = 1
     previous_tasks: list[str] = field(default_factory=list)
     #: Remaining percent per window when the budget started, so `spend N` means
@@ -172,14 +172,23 @@ class TaskSession:
         return self.state == LandingState.STOPPED and self.stop_reason == "cancelled"
 
     @property
-    def is_renewable(self) -> bool:
-        """A finished task can start a new segment; a landed budget cannot.
-
-        `task_complete` means the task ended while quota was still healthy, so
-        the floor was never in danger. `landed`/`emergency` mean the guard
-        actually stopped the work, and renewing would defeat the floor.
-        """
+    def is_complete(self) -> bool:
+        """The task ended, but the current turn is still frozen."""
         return self.state == LandingState.STOPPED and self.stop_reason == "task_complete"
+
+    @property
+    def is_released(self) -> bool:
+        """A later real user instruction released the completed task contract."""
+        return self.state == LandingState.STOPPED and self.stop_reason == "completed_released"
+
+    @property
+    def is_inactive(self) -> bool:
+        """A user cancellation and normal completion both release the task guard."""
+        # Versions before the task-scoped lifecycle automatically renewed a
+        # completed budget into segment 2+. Treat those persisted sessions as
+        # released on upgrade so the obsolete global contract cannot keep
+        # blocking another chat after the fix is installed.
+        return self.is_cancelled or self.is_released or self.segment_count > 1
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)

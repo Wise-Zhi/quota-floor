@@ -7,9 +7,8 @@ this directory is a manual development/reference example.
 Merge `settings.json` into a Claude Code settings file rather than overwriting an
 existing one.
 
-`UserPromptSubmit` is required, not optional: it is what lets a completed budget
-start a new segment under the same floor when the user asks for something else.
-Without it, `landing resume` has to be run by hand.
+`UserPromptSubmit` is used for explicit chat cancellation. Completed task budgets
+do not restart on later prompts.
 
 ## If `landing` is not on PATH, or is blocked
 

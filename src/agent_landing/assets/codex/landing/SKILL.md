@@ -104,17 +104,17 @@ as a spending target. If the task completes early, immediately run
 `landing complete` and stop — never invent extra work, tests, refactors, or polish
 to consume the unused allowance.
 
-The budget contract outlives a single task: if the user sends a new instruction
-afterwards, a new segment starts under the same floor. Codex does this
-automatically when the `UserPromptSubmit` hook is installed (0.149 and later);
-run `landing resume` by hand on builds or setups without it.
+The budget belongs only to this requested task. Completion freezes this turn;
+the next real user instruction releases the finished contract instead of
+renewing it. Later tasks and other chats do not inherit the floor. A later
+Landing invocation starts a fresh budget.
 
 If the user wants the budget itself to end — "stop watching my quota", "forget the
 budget", "cancel that" — **do not run a cancel command**. An agent cannot lift its
 own quota floor, and at the boundary the attempt is denied. Tell the user to send
 `$landing cancel` as their whole message; the guard stands down before the next
 turn begins. Use `landing complete` only when the *task* is done and the budget
-should stay in force.
+should end before the task finishes.
 
 When hooks inject CONSERVE, LAND, EMERGENCY, or STOPPED state, follow them exactly.
 

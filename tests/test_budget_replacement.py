@@ -20,7 +20,7 @@ import pytest
 
 from agent_landing.cli import build_parser
 from agent_landing.hooks import user_prompt
-from agent_landing.models import QuotaSnapshot, QuotaWindow
+from agent_landing.models import LandingState, QuotaSnapshot, QuotaWindow
 from agent_landing.state import StateStore
 
 
@@ -84,6 +84,21 @@ def test_cancelling_first_is_the_way_to_loosen(tmp_path, capsys):
     user_prompt({"prompt": "/landing cancel"}, store)
     assert start(tmp_path, 5) == 0
     assert store.load_session().floor_percent == 5
+
+
+def test_completed_budget_can_be_replaced_with_a_fresh_lower_floor(tmp_path, capsys):
+    store = seed(tmp_path)
+    start(tmp_path, 88)
+    capsys.readouterr()
+    session = store.load_session()
+    session.floor_percent = 88
+    session.state = LandingState.STOPPED
+    session.stop_reason = "task_complete"
+    store.save_session(session)
+
+    assert start(tmp_path, 70, task="new task") == 0
+    capsys.readouterr()
+    assert store.load_session().floor_percent == 70
 
 
 def test_measured_burn_survives_a_new_budget(tmp_path, capsys):

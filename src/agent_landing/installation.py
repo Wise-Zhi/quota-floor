@@ -264,7 +264,7 @@ def _render_skill_asset(
         text = re.sub(r"```bash(\r?\n)(?=landing invoke)", r"```powershell\1", text)
     prefix = _skill_runtime_prefix(host, python_executable, os_name)
     return re.sub(
-        r"(?<![/\$])\blanding (?=(?:invoke|start|complete|resume|cancel|\*))",
+        r"(?<![/\$])\blanding (?=(?:invoke|start|complete|cancel|\*))",
         lambda _match: f"{prefix} ",
         text,
     ).encode("utf-8")

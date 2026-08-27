@@ -130,8 +130,8 @@ def test_the_scope_flag_overrides_the_environment(fake_home, tmp_path, monkeypat
     assert not (tmp_path / ".landing" / "session.json").exists()
 
 
-def test_a_new_segment_adopts_the_directory_the_instruction_came_from(fake_home, tmp_path, monkeypatch, capsys):
-    """One budget spans checkouts, so an emergency handoff must land where the work is."""
+def test_a_fresh_budget_adopts_its_own_directory(fake_home, tmp_path, monkeypatch, capsys):
+    """A completed task releases its contract; the next command owns its checkout."""
     monkeypatch.delenv("LANDING_STATE_SCOPE", raising=False)
     repo_a, repo_b = tmp_path / "a", tmp_path / "b"
     repo_a.mkdir()
@@ -141,7 +141,8 @@ def test_a_new_segment_adopts_the_directory_the_instruction_came_from(fake_home,
         ["--cwd", str(repo_a), "start", "--provider", "claude", "--window", "five_hour",
          "--leave", "70", "--remaining", "95", "--task", "t"],
         ["--cwd", str(repo_a), "complete"],
-        ["--cwd", str(repo_b), "resume"],
+        ["--cwd", str(repo_b), "start", "--provider", "claude", "--window", "five_hour",
+         "--leave", "65", "--remaining", "90", "--task", "next"],
     ):
         args = build_parser().parse_args(argv)
         assert args.func(args) == 0

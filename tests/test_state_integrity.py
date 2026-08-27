@@ -76,7 +76,7 @@ def test_an_internal_failure_with_a_budget_in_force_blocks(tmp_path):
 
 
 def test_the_session_ending_hooks_fail_safe_instead_of_closed(tmp_path):
-    """These two only ever stop or renew a budget, so doing nothing is the safe answer."""
+    """These hooks only stop or release a budget, so doing nothing is safe."""
     store = store_with_session(tmp_path)
     truncate_session(store)
     with pytest.raises(CorruptStateError):

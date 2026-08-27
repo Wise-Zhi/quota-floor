@@ -169,32 +169,6 @@ def hook_json(decision: str | None = None, reason: str | None = None, context: s
     return {"hookSpecificOutput": specific}
 
 
-def renew_completed_segment(session: TaskSession, cwd: str | None = None) -> bool:
-    """Start a new task segment under the same floor after an early completion.
-
-    The budget contract belongs to the user, not to one task: finishing a task
-    must not silently drop the guard for whatever the user asks next. Only an
-    early `landing complete` is renewable -- a landed or emergency stop means the
-    quota itself ran out, and renewing there would defeat the floor.
-
-    The new segment adopts the directory the instruction came from. A budget is
-    per account, so consecutive segments can run in different checkouts, and an
-    emergency handoff has to land where the work actually is.
-    """
-    if not session.is_renewable:
-        return False
-    if cwd:
-        session.cwd = str(Path(cwd).resolve())
-    if session.task:
-        session.previous_tasks = (session.previous_tasks + [session.task])[-10:]
-    session.segment_count += 1
-    session.state = LandingState.NORMAL
-    session.last_notified_state = None
-    session.stop_reason = None
-    session.completed_at_remaining_percent = None
-    return True
-
-
 def resolve_budget_window(session: TaskSession, snapshot: QuotaSnapshot) -> QuotaWindow | None:
     """Find the window this budget applies to, migrating if the plan changed.
 
@@ -223,9 +197,9 @@ def evaluate_current(
     tool_use_id: str | None = None,
 ) -> tuple[TaskSession, PolicyDecision] | None:
     session = store.load_session()
-    if not session or session.is_cancelled:
-        # No budget was requested, or the user ended the one they had. Either way
-        # the guard has no mandate and must stay out of the way entirely.
+    if not session or session.is_inactive:
+        # No budget was requested, or its one task ended. Either way the guard
+        # has no mandate over later work or another conversation.
         return None
     if count_tool_call and not _already_counted(session, tool_use_id):
         session.tool_calls_since_snapshot += 1
@@ -443,7 +417,7 @@ def _prompt_context(text: str) -> dict[str, Any]:
 
 
 def user_prompt(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
-    """Act on a new user instruction: cancel the budget, or renew a segment.
+    """Act on an explicit user cancellation; never renew a completed task.
 
     This hook is the only channel that can prove the *user* asked for something --
     an agent cannot manufacture a `UserPromptSubmit`. That is what lets it change
@@ -482,6 +456,15 @@ def user_prompt(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
                 "any landing command for it."
             )
 
+        if session.is_complete:
+            # `complete` freezes the rest of the current agent turn so the model
+            # cannot declare victory and keep spending. A fresh UserPromptSubmit
+            # proves control returned to the user; release the old task instead
+            # of renewing it into an unrelated instruction or another chat.
+            session.stop_reason = "completed_released"
+            store.save_session(session)
+            return {}
+
         if not session.is_cancelled and suggests_cancel(prompt):
             # Deliberately does not cancel: this is a guess, and a wrong guess
             # unguards the user silently. Point at the exact phrasing that works.
@@ -493,17 +476,7 @@ def user_prompt(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
                 "quota floor, and the attempt will be denied."
             )
 
-        # `cwd` is where the host launched the hook, i.e. the project the user is
-        # actually in right now -- which need not be the one the budget started in.
-        if not renew_completed_segment(session, cwd=payload.get("cwd") or os.getcwd()):
-            return {}
-        store.save_session(session)
-
-    return _prompt_context(
-        f"Quota guard: the previous task completed and a new segment (#{session.segment_count}) "
-        f"has started under the same budget. The {session.window} floor is still "
-        f"{session.floor_percent:.1f}% and is a hard limit, never a spending target."
-    )
+        return {}
 
 
 def post_tool(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:

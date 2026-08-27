@@ -48,8 +48,8 @@ def test_cancelled_budget_is_not_revived_by_a_new_user_prompt(tmp_path):
     assert store.load_session().segment_count == 1
 
 
-def test_cancel_is_distinct_from_complete(tmp_path):
-    """`complete` ends the task and keeps the contract; `cancel` ends the contract."""
+def test_next_user_prompt_releases_a_completed_guard(tmp_path):
+    """Completion freezes the turn; the next real instruction clears the old task."""
     store = store_with(tmp_path)
     session = store.load_session()
     session.state = LandingState.STOPPED
@@ -57,8 +57,10 @@ def test_cancel_is_distinct_from_complete(tmp_path):
     store.save_session(session)
 
     assert pre_tool(WRITE, store)["hookSpecificOutput"]["permissionDecision"] == "deny"
-    user_prompt({"prompt": "next thing"}, store)
-    assert store.load_session().segment_count == 2, "complete keeps the budget alive"
+    assert user_prompt({"prompt": "next thing"}, store) == {}
+    assert store.load_session().segment_count == 1
+    assert store.load_session().stop_reason == "completed_released"
+    assert pre_tool(WRITE, store) == {}
 
     cancel(store)
     assert pre_tool(WRITE, store) == {}, "cancel ends it"
@@ -86,6 +88,7 @@ def test_evaluate_current_reports_nothing_for_a_cancelled_budget(tmp_path):
 
 @pytest.mark.parametrize("reason, guarded", [
     ("task_complete", True),
+    ("completed_released", False),
     ("landed", True),
     ("emergency", True),
     ("cancelled", False),

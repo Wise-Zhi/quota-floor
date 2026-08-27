@@ -16,7 +16,6 @@ from .hooks import (
     gate_failure,
     post_tool,
     pre_tool,
-    renew_completed_segment,
     user_prompt,
 )
 from .installation import HOSTS, InstallationConflict, doctor_host, install_host, uninstall_host
@@ -305,7 +304,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         # around the ratchet either: the very next tool call is denied, so the
         # `start` never runs.
         previous = None
-    if previous is not None and not previous.is_cancelled:
+    if previous is not None and not (previous.is_inactive or previous.is_complete):
         # A budget already in force. Tightening it is always safe and needs no
         # permission; loosening it is the one thing an agent must never be able
         # to do, and `landing start` was a wide-open route to exactly that --
@@ -530,28 +529,6 @@ def cmd_hook_user_prompt(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_resume(args: argparse.Namespace) -> int:
-    """Manual equivalent of the UserPromptSubmit hook, for hosts that lack one."""
-    store = _store(args)
-    session = store.load_session()
-    if not session:
-        raise SystemExit("No quota-budgeted task to resume.")
-    if not renew_completed_segment(session, cwd=getattr(args, "cwd", None) or os.getcwd()):
-        raise SystemExit(
-            f"Session is {session.state.value} (reason: {session.stop_reason or 'n/a'}) and is not "
-            "renewable. Only a task that finished early can start a new segment; a landed or "
-            "emergency stop means the quota itself ran out. Start a new budget explicitly."
-        )
-    store.save_session(session)
-    print(json.dumps({
-        "state": session.state.value,
-        "segment": session.segment_count,
-        "floor_percent": session.floor_percent,
-        "message": "New task segment started under the existing floor.",
-    }, indent=2))
-    return 0
-
-
 def _compact_status_line(session: TaskSession, decision, runway) -> str:
     headroom = max(0.0, decision.remaining_percent - decision.development_floor_percent)
     window = "5H" if session.window == "five_hour" else "W" if session.window == "seven_day" else session.window
@@ -652,9 +629,8 @@ def cmd_complete(args: argparse.Namespace) -> int:
         "floor_percent": session.floor_percent,
         "segment": session.segment_count,
         "message": (
-            "Task completed. The quota floor is a limit, not a spending target; no further work is "
-            "allowed on this task. The budget contract stays in force: a new instruction starts a new "
-            f"segment under the same {session.floor_percent:.1f}% floor."
+            "Task completed before the quota floor. This task's guard is now released; "
+            "a later Landing command starts a fresh budget."
         ),
     }, indent=2))
     return 0
@@ -871,16 +847,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "hook-user-prompt",
-        help="UserPromptSubmit gate: a new user instruction starts a new segment under the same floor",
+        help="UserPromptSubmit gate for explicit user cancellation",
     )
     p.add_argument("--platform", choices=["claude", "codex"], required=True)
     p.set_defaults(func=cmd_hook_user_prompt)
-
-    p = sub.add_parser(
-        "resume",
-        help="start a new task segment under the existing floor (manual UserPromptSubmit equivalent)",
-    )
-    p.set_defaults(func=cmd_resume)
 
     p = sub.add_parser("status", help="show the current budget decision and observed burn-rate runway")
     p.add_argument("--compact", action="store_true", help="print a one-line terminal/statusline view")
@@ -888,16 +858,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "complete",
-        help=(
-            "end the current task because it finished before the floor; the budget stays "
-            "in force and a new instruction starts a new segment"
-        ),
+        help="end the current task and release its budget guard",
     )
     p.set_defaults(func=cmd_complete)
 
     p = sub.add_parser(
         "cancel",
-        help="end the budget contract entirely and stop guarding (use `complete` to end just the task)",
+        help="end the active budget early and stop guarding",
     )
     p.set_defaults(func=cmd_cancel)
 

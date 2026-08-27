@@ -57,19 +57,17 @@ Persists local runtime state:
 - `latest_snapshot.json`
 - `snapshots.jsonl`
 
-`resolve_state_root()` puts these in `~/.landing/` by default. Quota is
-account-wide, so the budget is too: state used to live in `<cwd>/.landing/`,
-which meant a floor set in one checkout stopped guarding the moment the agent
-worked in another against the same quota, and every clone restarted its burn
-history and therefore its landing reserve. `--state-scope project` (or
+`resolve_state_root()` puts these in `~/.landing/` by default. Quota telemetry is
+account-wide, and an active task contract must keep guarding if that task touches
+another checkout. State used to live in `<cwd>/.landing/`, which lost both.
+`--state-scope project` (or
 `LANDING_STATE_SCOPE=project`) is the explicit opt-out; `LANDING_HOME` /
 `AGENT_LANDING_HOME` still override both. `adopt_project_state()` carries a
 budget left in an older project-scoped root up to the user-level one, copying
 rather than moving, and never over a budget already in force.
 
-Because one budget spans checkouts, segment renewal re-points `session.cwd` at
-the directory the new instruction came from — an emergency handoff has to land
-where the work actually is.
+Each fresh budget records its own `session.cwd`, so an emergency handoff lands in
+the checkout owned by that task.
 
 Writes go through `os.replace` so the file is swapped in one step. The session is
 rewritten on nearly every tool call, which makes a half-written file reachable
@@ -145,16 +143,17 @@ still believes they are protected. `pre_tool()` answers unreadable state with a
 denial, and `gate_failure()` converts any other internal error into one as well.
 Where no session file exists there is no mandate to enforce, so a failure there
 stays out of the way exactly as the healthy path does. `post_tool()` and
-`user_prompt()` fail *safe* rather than closed: they can only end or renew a
-budget, so doing nothing leaves the guard running.
+`user_prompt()` fail *safe* rather than closed: they can only cancel or release a
+completed budget, so doing nothing leaves the guard running.
 
 `post_tool()` marks the task stopped once the model-written handoff succeeds,
 with `stop_reason="landed"`. Success means the file is on disk and non-empty, not
-merely that the write tool reported success: `landed` is terminal and not
-renewable, so recording it for a failed write would end the budget with no
+merely that the write tool reported success: `landed` is terminal, so recording
+it for a failed write would end the budget with no
 handoff at all — the exact outcome the landing reserve exists to prevent.
 
-`user_prompt()` is the only place a completed segment may be renewed — see below.
+`user_prompt()` releases `task_complete` only after control returns to the user;
+it never renews the old floor.
 
 ### `handoff.py`
 
@@ -187,7 +186,6 @@ Entry point for:
 - `invoke` — parse a raw invocation and start the budget, refusing on any ambiguity;
 - starting a budgeted task;
 - hook integration (`hook-pre-tool`, `hook-post-tool`, `hook-user-prompt`);
-- `resume` — manual segment renewal for hosts without `UserPromptSubmit`;
 - status and dashboard;
 - early completion, and `cancel` to end the contract entirely;
 - deterministic fallback handoff;
@@ -209,15 +207,15 @@ on terms the guard would not have enforced. Comparing every window against the
 single absolute floor derived from the budget window was wrong for `spend`, which
 is a per-window delta.
 
-## The budget contract outlives the task
+## A budget belongs to one task
 
-A budget belongs to the user, not to one task. Finishing a task must not quietly drop the guard for whatever is asked next, so a completed session starts a **new segment** under the same floor rather than being released.
-
-Only a *new user instruction* may start that segment: the `UserPromptSubmit` hook on Claude Code and on Codex, `landing resume` on hosts without one. A tool call can never do it, because a tool call cannot prove a user asked for anything — allowing that would let the agent work straight past `landing complete`.
-
-A session that stopped because quota actually ran out (`landed` or `emergency`) is **not** renewable.
-
-`cancel` is the one stop reason that stands the guard down completely: `evaluate_current` reports nothing for it, so tool use is unrestricted. Every other stopped state still gates. Without this the budget had no exit at all — renewal made `complete` non-terminal, and the only escape was deleting `session.json` by hand.
+`task_complete` remains guarded for the rest of the current agent turn, preventing
+the model from declaring completion and continuing to spend. The next
+`UserPromptSubmit` changes it to `completed_released`, an inactive state for which
+`evaluate_current` returns no gate decision. It never renews the old floor. A
+later Landing invocation creates a fresh task contract. Quota snapshots and burn
+samples remain account-scoped because they describe the shared provider account,
+not the lifecycle of one command.
 
 ### A floor ratchets
 
@@ -259,7 +257,7 @@ Every denial the gate emits carries `CANCEL_HINT`, so the message that blocks a 
 ## Core invariants
 
 1. A quota floor is a limit, never a target.
-2. `complete` stops immediately even far above the floor, and the agent cannot renew its own segment.
+2. `complete` freezes the current turn even far above the floor; the next user instruction releases, never renews, that task contract.
 3. Unknown quota is never fabricated as 100% available, and neither is stale quota.
 4. Runway telemetry cannot change enforcement decisions.
 5. The model is not asked to calculate whether the model should spend more quota, nor to parse the invocation.
@@ -289,6 +287,6 @@ The provider interface is intentionally small: convert provider-specific quota d
   file, while LAND blocked the same `apply_patch` and no target file landed.
   Keep this claim version-scoped because other builds have reported deny-path
   regressions.
-- Codex exposes `UserPromptSubmit` as of codex-cli 0.149.0-alpha.4.3, verified via `hooks/list` on its app-server. On builds without it, segment renewal is manual via `landing resume`.
+- Codex exposes `UserPromptSubmit` as of codex-cli 0.149.0-alpha.4.3, verified via `hooks/list` on its app-server; Landing uses it for explicit chat cancellation, not task renewal.
 - Burn-rate runway uses wall-clock intervals and excludes long idle gaps; active-compute time is not yet measured directly.
 - Installer/config merging and real cross-platform integration testing are still pending.

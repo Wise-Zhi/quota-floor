@@ -137,15 +137,15 @@ The strongest rule in the project is:
 
 As soon as the task's acceptance criteria are satisfied, the agent runs `landing complete`. The session becomes `STOPPED` immediately, even if a large amount of the budget was unused. The remaining allowance is returned to the user; it is never treated as quota that should be spent.
 
-### The budget outlives the task
+### The budget belongs to one task
 
-A budget belongs to the user, not to one task. Finishing a task must not quietly drop the guard for whatever is asked next, so a completed session starts a **new segment** under the same floor rather than being released.
+When the requested task completes, `landing complete` freezes the rest of that
+agent turn. The next real user instruction releases the finished contract instead
+of renewing it, so another task or chat does not inherit the floor. A new Landing
+command starts a fresh task budget, while account-level quota snapshots and
+measured burn history remain shared so reserve estimates do not reset.
 
-Only a *new user instruction* may start that segment. Both Claude Code and Codex expose a `UserPromptSubmit` hook for this (verified on codex-cli 0.149.0-alpha.4.3); `landing resume` is the manual fallback for hosts that do not. A tool call can never do it, because a tool call cannot prove a user asked for anything — allowing that would let the agent work straight past `landing complete`.
-
-A session that stopped because quota actually ran out (`landed` or `emergency`) is **not** renewable. Renewing there would defeat the floor.
-
-To end the contract itself rather than one task, send `/landing cancel` (Codex: `$landing cancel`) as a whole message. The guard stands down, later instructions do not restart the floor, and the session is kept on disk so its burn history remains useful to the next budget.
+To end an active budget early, send `/landing cancel` (Codex: `$landing cancel`) as a whole message. The guard stands down, and the session is kept on disk so its burn history remains useful to the next budget.
 
 It has to be sent as an instruction rather than run as a command, because the gate denies the agent its own cancel — an agent must never lift its own floor. The `UserPromptSubmit` hook is the one channel an agent cannot manufacture, so that is where a cancel is honoured. A phrasing that only *resembles* a cancel ("forget the budget") is answered with a pointer to the exact command and changes nothing: guessing here would unguard a user who still believes they are covered.
 

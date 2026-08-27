@@ -141,8 +141,8 @@ def test_cancelling_with_no_budget_says_so(tmp_path):
     assert "no active quota budget" in result["hookSpecificOutput"]["additionalContext"]
 
 
-def test_cancelling_does_not_renew_a_completed_segment(tmp_path):
-    """Cancel and renew both live in this hook; they must not run together."""
+def test_cancelling_a_completed_task_does_not_restart_it(tmp_path):
+    """Explicit cancellation remains terminal even after task completion."""
     store = store_in_land(tmp_path, remaining=91.0)
     session = store.load_session()
     session.state = LandingState.STOPPED
@@ -152,7 +152,7 @@ def test_cancelling_does_not_renew_a_completed_segment(tmp_path):
     user_prompt({"prompt": "/landing cancel"}, store)
     session = store.load_session()
     assert session.is_cancelled
-    assert session.segment_count == 1, "cancelling is not the start of a new segment"
+    assert session.segment_count == 1, "cancelling must never restart the task"
 
 
 def test_the_parser_understands_the_bare_verb():

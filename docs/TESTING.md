@@ -44,14 +44,14 @@ landing status
 
 Verify that the task is `STOPPED` and that no logic attempts to spend down to 75%.
 
-Relevant regression tests: `tests/test_hooks.py::test_task_complete_stops_even_far_above_floor`, and `tests/test_budget_contract.py::test_agent_cannot_self_renew_after_completing`.
+Relevant regression tests: `tests/test_hooks.py::test_task_complete_stops_even_far_above_floor`, and `tests/test_budget_contract.py::test_completed_task_blocks_more_work_in_the_same_turn`.
 
-### 2. The budget survives the task, but only a user can renew it
+### 2. Completion freezes the turn but does not leak into the next task
 
 Verify that after `landing complete`:
 
 - a tool call is still denied — the agent cannot renew its own segment;
-- a `UserPromptSubmit` hook call starts segment 2 under the **same** floor;
+- a later `UserPromptSubmit` releases rather than restarts the completed budget;
 - a session stopped as `landed` or `emergency` is **not** renewable.
 
 Relevant tests: `tests/test_budget_contract.py`.
@@ -184,9 +184,8 @@ to. Verify too that `--state-scope project` restores per-checkout state, that
 `LANDING_HOME` overrides both, and that an unknown scope is refused rather than
 guessed.
 
-Because one budget spans checkouts, verify that renewing a segment re-points
-`session.cwd` at the directory the new instruction came from: an emergency
-handoff has to land where the work actually is.
+Verify that a fresh budget records the checkout where that new task started, so
+an emergency handoff lands in the right directory.
 
 Relevant tests: `tests/test_state_scope.py`.
 
@@ -218,7 +217,7 @@ Validation goals:
 3. `landing status` shows the selected quota window.
 4. PreToolUse receives `CONSERVE`/`LAND` context at the correct boundary.
 5. In `LAND`, new writes are denied while handoff output remains permitted.
-6. `UserPromptSubmit` renews a completed segment under the same floor.
+6. `UserPromptSubmit` releases a completed task and never renews its floor.
 7. Early completion remains stopped even if substantial quota is unused.
 
 Known host behaviors to account for:
@@ -267,7 +266,7 @@ Validation goals:
 2. The requested `five_hour`/`seven_day` window maps correctly, and `usedPercent` is read as consumed quota.
 3. Stale quota is refreshed before a Codex PreToolUse decision.
 4. The host actually honors deny decisions for the tool paths under test.
-5. Segment renewal works: `UserPromptSubmit` where the build has it (0.149+), `landing resume` otherwise.
+5. Completion releases the task guard and later prompts do not restart it.
 
 Because current Codex builds may differ in hook enforcement, record the exact Codex version and whether `apply_patch`/write denial was actually enforced.
 

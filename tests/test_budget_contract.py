@@ -1,4 +1,4 @@
-"""The budget contract outlives a single task, without weakening the floor."""
+"""A Landing budget belongs to one requested task."""
 
 from pathlib import Path
 from time import time
@@ -37,8 +37,8 @@ def complete(store: StateStore) -> None:
 WRITE = {"tool_name": "Write", "tool_input": {"file_path": "src/next.py"}}
 
 
-def test_agent_cannot_self_renew_after_completing(tmp_path):
-    """The completion invariant: a tool call is not a new instruction."""
+def test_completed_task_blocks_more_work_in_the_same_turn(tmp_path):
+    """The agent cannot say complete and then continue spending in the same turn."""
     store = store_with_session(tmp_path, 91.0)
     complete(store)
     result = pre_tool(WRITE, store)
@@ -46,24 +46,23 @@ def test_agent_cannot_self_renew_after_completing(tmp_path):
     assert store.load_session().state == LandingState.STOPPED
 
 
-def test_new_user_instruction_starts_a_new_segment_under_the_same_floor(tmp_path):
+def test_new_user_instruction_does_not_restart_a_completed_budget(tmp_path):
     store = store_with_session(tmp_path, 91.0)
     complete(store)
 
     out = user_prompt({"prompt": "now update the README"}, store)
-    assert "new segment" in out["hookSpecificOutput"]["additionalContext"]
+    assert out == {}
 
     session = store.load_session()
-    assert session.state == LandingState.NORMAL
-    assert session.segment_count == 2
-    assert session.floor_percent == 70, "renewal must never move the user's floor"
-    assert session.previous_tasks == ["task A"]
+    assert session.state == LandingState.STOPPED
+    assert session.stop_reason == "completed_released"
+    assert session.segment_count == 1
+    assert session.floor_percent == 70
 
     assert pre_tool(WRITE, store).get("hookSpecificOutput", {}).get("permissionDecision") != "deny"
 
 
-def test_renewal_re_evaluates_quota_rather_than_assuming_headroom(tmp_path):
-    """Renewing after completion must not hand back a budget that is already spent."""
+def test_completed_budget_stays_inactive_even_if_quota_later_falls(tmp_path):
     store = store_with_session(tmp_path, 91.0)
     complete(store)
     # Quota collapsed to the landing boundary while the session sat completed.
@@ -73,7 +72,7 @@ def test_renewal_re_evaluates_quota_rather_than_assuming_headroom(tmp_path):
         sampled_at=time(),
     ))
     user_prompt({"prompt": "one more thing"}, store)
-    assert pre_tool(WRITE, store)["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert pre_tool(WRITE, store) == {}
 
 
 def test_landed_session_is_not_renewable_by_a_user_prompt(tmp_path):
@@ -106,3 +105,13 @@ def test_user_prompt_is_a_noop_on_a_healthy_session(tmp_path):
     session = store.load_session()
     assert session.segment_count == 1
     assert session.state == LandingState.NORMAL
+
+
+def test_legacy_auto_renewed_segment_is_released_on_upgrade(tmp_path):
+    """Old segment 2 state must not keep leaking a floor after this fix ships."""
+    store = store_with_session(tmp_path, 91.0)
+    session = store.load_session()
+    session.segment_count = 2
+    store.save_session(session)
+
+    assert pre_tool(WRITE, store) == {}
