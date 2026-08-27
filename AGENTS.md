@@ -7,7 +7,7 @@ Read these first:
 1. `README.md`
 2. `docs/ARCHITECTURE.md`
 3. `docs/TESTING.md`
-4. `SKILL.md`
+4. `src/agent_landing/assets/claude/landing/SKILL.md` (the packaged skill)
 
 ## Product invariant
 

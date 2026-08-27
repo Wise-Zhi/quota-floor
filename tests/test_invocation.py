@@ -152,12 +152,18 @@ def test_every_example_in_the_docs_actually_parses():
 
     from agent_landing.invocation import EXAMPLES
 
+    # The packaged assets are the source of truth; the in-tree copies are pinned
+    # to them by test_installation. A missing path would silently skip, so they
+    # are asserted present rather than tolerated.
     roots = [
-        Path("SKILL.md"),
+        Path("src/agent_landing/assets/claude/landing/SKILL.md"),
+        Path("src/agent_landing/assets/codex/landing/SKILL.md"),
         Path(".claude/skills/landing/SKILL.md"),
         Path(".agents/skills/landing/SKILL.md"),
         Path("README.md"),
     ]
+    for path in roots:
+        assert path.exists(), f"documentation root disappeared: {path}"
     found = [example.split(" ", 1)[1] for example in EXAMPLES]
     for path in roots:
         if not path.exists():

@@ -1,9 +1,9 @@
 ---
 name: landing
-description: Start a quota-budgeted coding task with a hard remaining-quota floor and graceful handoff.
+description: This skill should be used when the user asks to "leave me 70% quota", "spend at most 15% on this", "stop before my weekly quota drops below 40%", or otherwise asks for a coding task to be run under an account-quota budget with a hard floor on what must remain afterwards.
 argument-hint: '(leave|spend) [weekly|5h] <percent> -- <task>'
-disable-model-invocation: true
 allowed-tools: Bash(landing *)
+version: 0.1.0
 ---
 
 Use Agent Landing for this task.
@@ -28,6 +28,13 @@ they were protected while nothing was guarding their quota.
 
 **If it succeeds**, it printed an `interpretation` line. Show that line to the user
 before beginning work, so a misunderstanding surfaces before any quota is spent.
+
+This skill also triggers on a plain-language budget request, not only on an
+explicit invocation. Pass the user's own words through unchanged and **never
+supply a percentage they did not give**. A request with no number is refused by
+the parser -- show that refusal and ask which floor they want, rather than
+choosing one for them. Starting a budget the user did not specify is as wrong as
+starting none at all: either way the number guarding their quota is not theirs.
 
 ## Syntax
 
