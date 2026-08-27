@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
+from pathlib import Path
 from time import time
 from typing import Any
 
@@ -121,6 +124,44 @@ def parse_codex_rate_limits(result: dict[str, Any]) -> QuotaSnapshot:
     )
 
 
+def find_codex_executable() -> str | None:
+    """Locate the codex binary, preferring PATH.
+
+    On Windows it lives under a content-hashed directory that changes on every
+    Codex update, so the newest match is the right one.
+    """
+    found = shutil.which("codex")
+    if found:
+        return found
+    if os.name != "nt":
+        return None
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if not local_app_data:
+        return None
+    binary_root = Path(local_app_data) / "OpenAI" / "Codex" / "bin"
+    candidates = list(binary_root.glob("*/codex.exe"))
+    if not candidates:
+        candidates = list(binary_root.glob("codex.exe"))
+    return str(max(candidates, key=lambda path: path.stat().st_mtime)) if candidates else None
+
+
+def resolve_codex_executable(executable: str) -> str:
+    """Turn the default `codex` into a real path, at call time rather than at install time.
+
+    Baking the path into the installed hook command looked simpler and was a
+    trap: Codex binds hook trust to the command string, and the Windows binary
+    sits in a directory whose name changes on every update. So each Codex update
+    rewrote the hash, invalidated the trust, and silently reverted PreToolUse --
+    the only hook that actually blocks -- to untrusted until someone re-approved
+    it. Resolving here keeps the installed command byte-stable forever.
+
+    An explicit `--executable` is always honoured untouched.
+    """
+    if executable != "codex":
+        return executable
+    return find_codex_executable() or executable
+
+
 class CodexAppServerProvider:
     """Reads quota without invoking a model turn via Codex app-server JSON-RPC."""
 
@@ -142,7 +183,7 @@ class CodexAppServerProvider:
 
     def read(self) -> QuotaSnapshot:
         proc = subprocess.Popen(
-            [self.executable, "app-server"],
+            [resolve_codex_executable(self.executable), "app-server"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

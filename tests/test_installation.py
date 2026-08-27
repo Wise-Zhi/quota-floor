@@ -52,7 +52,6 @@ def test_codex_install_is_global_portable_and_preserves_unrelated_hooks(tmp_path
         "codex",
         home=tmp_path,
         python_executable="C:/Python/python.exe",
-        codex_executable="C:/Codex/codex.exe",
         os_name="nt",
     )
     config = _read(config_path)
@@ -65,7 +64,8 @@ def test_codex_install_is_global_portable_and_preserves_unrelated_hooks(tmp_path
         landing = [command for command in _commands(config, event) if "agent_landing.cli" in command]
         assert len(landing) == 1
         assert "C:/Python/python.exe" in landing[0]
-    assert "C:/Codex/codex.exe" in _commands(config, "PreToolUse")[1]
+    # No codex path is baked in; see the trust-stability test below for why.
+    assert not any("Codex" in command for command in _commands(config, "PreToolUse"))
     assert (tmp_path / ".agents" / "skills" / "landing" / "SKILL.md").is_file()
     assert (tmp_path / ".agents" / "skills" / "landing" / "agents" / "openai.yaml").is_file()
     assert (tmp_path / ".agents" / "skills" / "landing" / ".landing-install.json").is_file()
@@ -422,3 +422,49 @@ def test_packaged_skills_match_the_repository_host_skills():
         assert packaged.read_text(encoding="utf-8").splitlines() == source.read_text(
             encoding="utf-8"
         ).splitlines()
+
+
+def test_the_codex_hook_command_survives_a_codex_update(tmp_path):
+    """The installed command must not contain the Codex binary path.
+
+    Codex binds hook trust to the command string, and on Windows the binary
+    lives under a content-hashed directory that changes on every update. Baking
+    the path in meant each update rewrote the hash, invalidated the trust, and
+    reverted PreToolUse -- the only hook that actually blocks -- to untrusted
+    until someone re-approved it. Observed twice in two days.
+
+    Installing twice with different Codex locations must produce byte-identical
+    configuration.
+    """
+    import os
+
+    def install_with_codex_at(location: str) -> str:
+        home = tmp_path / location.replace("/", "_")
+        os.environ["PATH"] = location
+        install_host("codex", home=home, python_executable="C:/Python/python.exe", os_name="nt")
+        return (home / ".codex" / "hooks.json").read_text(encoding="utf-8")
+
+    before = os.environ.get("PATH", "")
+    try:
+        first = install_with_codex_at("C:/Codex/bin/aaaaaaaa")
+        second = install_with_codex_at("C:/Codex/bin/bbbbbbbb")
+    finally:
+        os.environ["PATH"] = before
+
+    assert first == second
+    assert "aaaaaaaa" not in first and "bbbbbbbb" not in first
+
+
+def test_install_does_not_offer_a_flag_it_would_ignore():
+    """`--codex-executable` on `install` became a silent no-op; it was removed.
+
+    A flag that is accepted and ignored is the same class of failure as a hook
+    that looks configured and never runs.
+    """
+    from agent_landing.cli import build_parser
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["install", "--codex-executable", "C:/Codex/codex.exe"])
+    # It remains on `doctor`, which genuinely probes the live binary.
+    args = build_parser().parse_args(["doctor", "--codex-executable", "C:/Codex/codex.exe"])
+    assert args.codex_executable == "C:/Codex/codex.exe"

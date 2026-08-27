@@ -118,7 +118,6 @@ def _run_install_command(args: argparse.Namespace, action: str) -> int:
                     host,
                     home=args.home,
                     python_executable=sys.executable,
-                    codex_executable=args.codex_executable,
                 )
             elif action == "doctor":
                 result = doctor_host(
@@ -784,7 +783,6 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("install", help="install or update Landing for every project owned by this user")
     p.add_argument("--host", choices=["all", *HOSTS], default="all")
     p.add_argument("--home", help="override the user home directory (primarily for testing)")
-    p.add_argument("--codex-executable", help="path to Codex when it is not on PATH")
     p.set_defaults(func=cmd_install)
 
     p = sub.add_parser("doctor", help="verify the persistent skill, hooks, and Codex trust state")

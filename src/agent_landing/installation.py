@@ -16,6 +16,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from .providers import find_codex_executable
 from .state import resolve_state_root
 
 
@@ -124,12 +125,14 @@ def _hook_group(
     event: str,
     python_executable: str,
     os_name: str,
-    codex_executable: str | None,
 ) -> dict[str, Any]:
     action = EVENT_COMMANDS[event]
     parts = [python_executable, "-m", "agent_landing.cli", action, "--platform", host]
-    if host == "codex" and event == "PreToolUse":
-        parts += ["--executable", codex_executable or "codex"]
+    # Deliberately no `--executable`: Codex binds hook trust to the command
+    # string, and the Windows codex binary lives in a directory whose name
+    # changes on every update. Baking the path in meant each update invalidated
+    # the trust and quietly reverted the one hook that blocks to untrusted.
+    # `resolve_codex_executable()` finds it at call time instead.
     command = _quote_command(parts, os_name)
     hook: dict[str, Any] = {"type": "command", "command": command}
     if host == "codex":
@@ -194,7 +197,6 @@ def _merged_config(
     config: dict[str, Any],
     python_executable: str,
     os_name: str,
-    codex_executable: str | None,
 ) -> dict[str, Any]:
     merged = dict(config)
     wrapped: str | None = None
@@ -227,7 +229,7 @@ def _merged_config(
     hooks = dict(hooks_value)
     for event, action in EVENT_COMMANDS.items():
         groups = _remove_landing_groups(hooks.get(event), platform=host, action=action)
-        groups.append(_hook_group(host, event, python_executable, os_name, codex_executable))
+        groups.append(_hook_group(host, event, python_executable, os_name))
         hooks[event] = groups
     merged["hooks"] = hooks
     if host == "claude":
@@ -409,15 +411,13 @@ def install_host(
     *,
     home: str | Path | None = None,
     python_executable: str,
-    codex_executable: str | None = None,
     os_name: str | None = None,
 ) -> dict[str, Any]:
     home_path = Path(home).expanduser() if home is not None else Path.home()
     config_path, skill_path = _paths(host, home_path)
     config = _load_json(config_path)
-    resolved_codex = codex_executable or (find_codex_executable() if host == "codex" else None)
     platform_name = os_name or os.name
-    merged = _merged_config(host, config, python_executable, platform_name, resolved_codex)
+    merged = _merged_config(host, config, python_executable, platform_name)
     was_installed = _is_managed_skill(host, skill_path) or any(
         _landing_command(hook.get("command"), platform=host)
         for groups in (config.get("hooks", {}) or {}).values()
@@ -446,22 +446,6 @@ def install_host(
             else None
         ),
     }
-
-
-def find_codex_executable() -> str | None:
-    found = shutil.which("codex")
-    if found:
-        return found
-    if os.name != "nt":
-        return None
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if not local_app_data:
-        return None
-    binary_root = Path(local_app_data) / "OpenAI" / "Codex" / "bin"
-    candidates = list(binary_root.glob("*/codex.exe"))
-    if not candidates:
-        candidates = list(binary_root.glob("codex.exe"))
-    return str(max(candidates, key=lambda path: path.stat().st_mtime)) if candidates else None
 
 
 def _without_landing_config(host: str, config: dict[str, Any]) -> tuple[dict[str, Any], bool]:
