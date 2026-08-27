@@ -12,3 +12,7 @@ def isolated_landing_home(monkeypatch):
     """
     monkeypatch.delenv("LANDING_HOME", raising=False)
     monkeypatch.delenv("AGENT_LANDING_HOME", raising=False)
+    # State is user-scoped by default, so an unpinned store in a test would reach
+    # into the developer's real `~/.landing/`. Pin the suite to project scope;
+    # the tests that are actually about scope resolution set it themselves.
+    monkeypatch.setenv("LANDING_STATE_SCOPE", "project")
