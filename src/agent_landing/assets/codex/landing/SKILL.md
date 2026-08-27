@@ -30,10 +30,14 @@ parser rules below.
 
 ## Do not parse the arguments yourself
 
-Pass the raw text that followed `$landing` straight through, unmodified:
+Build the raw invocation from the **entire user message**, preserving task text
+on both sides of the Agent Landing skill chip. Remove only the `$landing` skill
+marker itself, then join the remaining text in its original order and pass that
+through. For example, `playtest this [Agent Landing] spend 20` becomes
+`playtest this spend 20`; the task before the chip must not disappear.
 
 ```bash
-landing invoke "<raw arguments>" --provider codex
+landing invoke "<whole message minus the skill marker>" --provider codex
 ```
 
 `landing invoke` is the single parser shared by Codex and Claude Code, so the two
