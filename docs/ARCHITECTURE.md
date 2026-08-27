@@ -219,6 +219,30 @@ A session that stopped because quota actually ran out (`landed` or `emergency`) 
 
 `cancel` is the one stop reason that stands the guard down completely: `evaluate_current` reports nothing for it, so tool use is unrestricted. Every other stopped state still gates. Without this the budget had no exit at all — renewal made `complete` non-terminal, and the only escape was deleting `session.json` by hand.
 
+### A floor ratchets
+
+`landing start` used to overwrite whatever session existed. The gate only guards
+the boundary, so in `NORMAL` nothing stopped an agent from replacing a 70% floor
+with 5% and continuing -- "an agent cannot lift its own floor" held at the
+boundary and nowhere else.
+
+Starting a budget over one already in force is therefore allowed only when it
+**tightens**. Loosening requires ending the contract first with `/landing
+cancel`, which only a real user prompt can perform. This is deliberately not a
+`--force` flag: CLI convention would offer one, but a flag is something the
+agent can type, which is exactly what must not work. POSIX rlimits resolve the
+same tension the same way -- the limit ratchets, and going back needs privilege.
+
+Burn samples carry across budgets. Discarding them reset the landing reserve
+from a measured value to the 4% default, biasing the reserve downwards -- the
+unsafe direction -- and starting the landing too late to finish a handoff. The
+contract that keeps a cancelled session on disk exists precisely so this history
+survives. `segment_count` deliberately does not carry: a new budget is a new
+contract.
+
+Replacing a budget is reported rather than left to be inferred from a changed
+number, per the rule that a program which changes state says so.
+
 ### Cancelling has to be reachable from the chat
 
 The gate denies `landing cancel` as a tool call, and must: an agent that can lift its own floor has no floor. But that left the contract with an exit only a terminal could reach. Demonstrated on 2026-08-27: a budget armed to test one host also gated the agent on another, the agent could not release itself by design, and the user was away from a shell — so nobody could stand the guard down.
@@ -247,6 +271,7 @@ Every denial the gate emits carries `CANCEL_HINT`, so the message that blocks a 
 11. The gate fails closed. A gate that cannot evaluate the budget denies rather than crashing, because a crashing hook is a hook the host ignores.
 12. Damaged local state is never read as "never guarded", and `cancel` always works on it.
 13. The contract always has an exit the user can reach without a terminal, and the agent still cannot take it.
+14. A floor may be tightened freely and loosened only by the user; measured burn history survives a new budget.
 13. The budget follows the account, not the checkout, because the quota does.
 14. Landing shares the host's status line; it never takes a slot the user was already using.
 

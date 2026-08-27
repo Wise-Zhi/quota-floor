@@ -295,6 +295,40 @@ def cmd_start(args: argparse.Namespace) -> int:
     if floor > remaining:
         raise SystemExit(f"Requested floor {floor:.1f}% is above current remaining quota {remaining:.1f}%")
 
+    try:
+        previous = store.load_session()
+    except CorruptStateError:
+        # `landing start` is one of the documented ways out of a damaged session,
+        # and the gate's own denial message names it. A floor that cannot be read
+        # cannot be compared, so there is nothing to ratchet against; refusing
+        # here would leave the user with a guard that denies everything and no
+        # way to re-establish one. Corrupting the session first is not a route
+        # around the ratchet either: the very next tool call is denied, so the
+        # `start` never runs.
+        previous = None
+    if previous is not None and not previous.is_cancelled:
+        # A budget already in force. Tightening it is always safe and needs no
+        # permission; loosening it is the one thing an agent must never be able
+        # to do, and `landing start` was a wide-open route to exactly that --
+        # the gate only guards the boundary, so in NORMAL an agent could replace
+        # a 70% floor with 5% and keep going.
+        #
+        # POSIX rlimits solve the same problem the same way: a limit ratchets
+        # one direction, and going the other way needs privilege. Here the
+        # privilege is `/landing cancel`, which only a real user prompt can
+        # perform -- deliberately not a `--force` flag, because a flag is
+        # something the agent can type, and that is the whole point.
+        if floor < previous.floor_percent:
+            raise SystemExit(
+                f"A quota budget is already in force with a {previous.floor_percent:.1f}% floor "
+                f"on {previous.window} (task: {previous.task!r}). Refusing to lower it to "
+                f"{floor:.1f}%.\n"
+                "Tightening a floor is always allowed; loosening one is not, because the guard "
+                "would then be weaker than the user asked for.\n"
+                "To replace it, end the contract first: send `/landing cancel` "
+                "(Codex: `$landing cancel`) as a whole message, then start the new budget."
+            )
+
     config = LandingConfig(
         min_reserve_percent=args.min_reserve,
         default_reserve_percent=args.default_reserve,
@@ -322,6 +356,21 @@ def cmd_start(args: argparse.Namespace) -> int:
             w.id: w.remaining_percent for w in snapshot.windows
         },
     )
+
+    if previous is not None and previous.provider == args.provider:
+        # Burn measurement belongs to the account, not to one budget. Dropping it
+        # reset the landing reserve from a measured value back to the 4% default
+        # -- biasing the reserve downwards, the unsafe direction, and starting
+        # the landing too late to finish a handoff. It also contradicted the
+        # contract that keeps a cancelled session on disk precisely so this
+        # history survives into the next budget.
+        #
+        # `segment_count` deliberately does NOT carry: a new budget is a new
+        # contract, and segment 1 of it is the honest number.
+        session.burn_samples = list(previous.burn_samples)
+        session.previous_tasks = (
+            previous.previous_tasks + ([previous.task] if previous.task else [])
+        )[-10:]
 
     # The floor is a limit on every window, so a window already at or below it
     # puts the budget in violation the moment it starts. Refusing here beats
@@ -362,7 +411,20 @@ def cmd_start(args: argparse.Namespace) -> int:
     store.save_snapshot(snapshot)
     decision = evaluate(session, remaining)
     scope_windows = [w.id for w in snapshot.windows] if floor_everywhere else [args.window]
+    # "If you change state, tell the user." Replacing a budget that was already
+    # in force is exactly the result a user cannot model from their own input,
+    # so it is named rather than left to be inferred from a changed number.
+    replaced = None
+    if previous is not None:
+        replaced = {
+            "previous_floor_percent": round(previous.floor_percent, 2),
+            "previous_task": previous.task,
+            "previous_state": previous.state.value,
+            "was_cancelled": previous.is_cancelled,
+            "burn_samples_carried_over": len(session.burn_samples),
+        }
     print(json.dumps({
+        "replaced_budget": replaced,
         "provider": args.provider,
         "window": args.window,
         "starting_remaining_percent": round(remaining, 2),
