@@ -8,7 +8,9 @@ from pathlib import Path
 from time import time
 from typing import Any
 
+from .budget import BudgetRefused, start_budget
 from .handoff import landing_prompt, reserve_handoff_path, write_fallback_handoff
+from .invocation import extract_invocation, parse_invocation
 from .models import LandingState, PolicyDecision, QuotaSnapshot, QuotaWindow, TaskSession
 from .policy import evaluate, unknown_quota_decision
 from .state import CorruptStateError, StateStore
@@ -419,7 +421,81 @@ def _prompt_context(text: str) -> dict[str, Any]:
     return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": text}}
 
 
-def user_prompt(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
+def _blocked(reason: str) -> dict[str, Any]:
+    """Refuse the prompt outright. The model never runs, so it cannot narrate."""
+    return {"decision": "block", "reason": reason, "systemMessage": reason}
+
+
+def _open_budget_from_prompt(
+    prompt: str,
+    store: StateStore,
+    *,
+    provider: str,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Open the budget here, before the model is given the turn.
+
+    This is the point of the hook-first design. Leaving the budget to the model
+    meant it had to load a skill, then spend a tool call on `landing invoke` --
+    and Codex requires a progress message before a tool call, so every budgeted
+    task opened with a paragraph about Landing instead of the work. No amount of
+    skill wording removes that: the preamble is structural, caused by there
+    being a tool call at all. There is no tool call now.
+
+    It also closes a real hole. Model-mediated triggering meant a budget request
+    could simply fail to trigger, leaving the user unguarded while believing
+    otherwise. A hook parses every prompt deterministically.
+
+    Returns a hook response when it handled the prompt, or None to fall through.
+    """
+    found = extract_invocation(prompt)
+    if found is None:
+        return None
+    arguments, authoritative = found
+    parsed = parse_invocation(arguments)
+    if not parsed.ok:
+        # Mid-message text that does not parse is prose about the command, not a
+        # broken invocation -- blocking there would make Landing impossible to
+        # discuss. See `extract_invocation`.
+        return _blocked(parsed.message()) if authoritative else None
+    if parsed.action == "cancel":
+        return None  # handled by the cancel path, which owns its own matching
+
+    snapshot = store.load_snapshot()
+    if snapshot is None or snapshot.provider != provider:
+        return _blocked(
+            f"Could not start a quota budget: no {provider} quota reading is available yet, so "
+            "there is nothing to budget against. Nothing was started, and the task was not run. "
+            "Retry once quota has been read, or run `landing status` to see why it is missing."
+        )
+    try:
+        with store.lock():
+            result = start_budget(
+                store,
+                snapshot,
+                provider=provider,
+                task=parsed.task,
+                window=parsed.window,
+                preserve=parsed.percent if parsed.means_leave else None,
+                max_spend=None if parsed.means_leave else parsed.percent,
+                cwd=payload.get("cwd") or os.getcwd(),
+            )
+    except BudgetRefused as refusal:
+        return _blocked(f"Could not start a quota budget: {refusal}")
+
+    # The model is told the budget exists and that there is nothing to do about
+    # it, so it has no reason to mention the guard before starting the work.
+    return _prompt_context(
+        f"Quota guard: a budget is already active for this instruction -- {result['interpretation']} "
+        "It was established before this turn began; do not run any landing command to set it up, "
+        "and do not describe the guard, the budget, or this setup to the user. "
+        f"The task is: {parsed.task}"
+    )
+
+
+def user_prompt(
+    payload: dict[str, Any], store: StateStore, provider: str = "claude"
+) -> dict[str, Any]:
     """Act on an explicit user cancellation; never renew a completed task.
 
     This hook is the only channel that can prove the *user* asked for something --
@@ -434,6 +510,10 @@ def user_prompt(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
     """
     prompt = str(payload.get("prompt") or payload.get("user_prompt") or "")
     explicit = is_cancel_invocation(prompt)
+
+    opened = _open_budget_from_prompt(prompt, store, provider=provider, payload=payload)
+    if opened is not None:
+        return opened
 
     with store.lock():
         session = store.load_session()

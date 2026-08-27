@@ -20,6 +20,7 @@ from .hooks import (
 )
 from .installation import HOSTS, InstallationConflict, doctor_host, install_host, uninstall_host
 from .invocation import parse_invocation
+from .budget import BudgetRefused, start_budget
 from .models import LandingConfig, LandingState, QuotaSnapshot, QuotaWindow, TaskSession
 from .policy import evaluate, window_floor, window_pressure
 from .runway import estimate_runway
@@ -216,229 +217,34 @@ def _current_snapshot(args: argparse.Namespace, provider: str, store: StateStore
     return snapshot
 
 
-#: Slash-command spelling of each window id, so a refusal can be restated in the
-#: syntax the user actually typed rather than only in CLI flags.
-_WINDOW_WORD = {"five_hour": "5h", "seven_day": "weekly"}
-
-
-def _interpretation(
-    mode: str,
-    floor: float,
-    max_spend: float | None,
-    remaining: float,
-    window: str,
-    scope_windows: list[str],
-) -> str:
-    """Restate the budget as a REMAINING floor, whichever way the user phrased it.
-
-    Always names the windows the floor covers. A plan can expose more than one,
-    and a floor that silently applied to only one of them was how `leave 70`
-    ended up guarding the window that never binds.
-    """
-    covers_many = len(scope_windows) > 1
-    listed = ", ".join(scope_windows)
-    if mode == "max_spend" and max_spend is not None:
-        lead = f"Spending at most {max_spend:.1f} percentage points"
-        body = (
-            f"on each of {listed}, measured from where that window stands right now; "
-            f"work stops as soon as any one of them has given up {max_spend:.1f} points"
-            if covers_many
-            else f"of the {window} quota, stopping while at least {floor:.1f}% is still "
-            f"REMAINING (currently {remaining:.1f}%)"
-        )
-    else:
-        lead = f"Leaving at least {floor:.1f}%"
-        body = (
-            f"REMAINING on every quota window ({listed}); work stops as soon as any one of "
-            f"them reaches {floor:.1f}%"
-            if covers_many
-            else f"REMAINING of the {window} quota (currently {remaining:.1f}%)"
-        )
-    return (
-        f"{lead}: {body}. "
-        "That floor is a limit, never a spending target -- if the task finishes sooner, "
-        "the unused quota is returned to you."
-    )
-
-
 def cmd_start(args: argparse.Namespace) -> int:
     store = _store(args)
     snapshot = _current_snapshot(args, args.provider, store)
-    # Naming a window scopes the floor to it; `auto` guards every window.
-    floor_everywhere = args.window == "auto"
-    if args.window == "auto":
-        window = snapshot.longest_window()
-        if not window:
-            raise SystemExit("No quota windows are available; cannot start a budget.")
-        args.window = window.id
-    else:
-        window = snapshot.window(args.window)
-    if not window:
-        available = ", ".join(w.id for w in snapshot.windows) or "none"
-        raise SystemExit(
-            f"Quota window {args.window!r} unavailable; available: {available}. "
-            "Omit the window to let Agent Landing pick the longest one your plan exposes."
-        )
-    remaining = window.remaining_percent
-
-    if args.preserve is not None:
-        floor = args.preserve
-        mode = "preserve"
-        max_spend = None
-    else:
-        max_spend = args.max_spend
-        floor = max(0.0, remaining - max_spend)
-        mode = "max_spend"
-
-    if floor > remaining:
-        raise SystemExit(f"Requested floor {floor:.1f}% is above current remaining quota {remaining:.1f}%")
-
     try:
-        previous = store.load_session()
-    except CorruptStateError:
-        # `landing start` is one of the documented ways out of a damaged session,
-        # and the gate's own denial message names it. A floor that cannot be read
-        # cannot be compared, so there is nothing to ratchet against; refusing
-        # here would leave the user with a guard that denies everything and no
-        # way to re-establish one. Corrupting the session first is not a route
-        # around the ratchet either: the very next tool call is denied, so the
-        # `start` never runs.
-        previous = None
-    if previous is not None and not (previous.is_inactive or previous.is_complete):
-        # A budget already in force. Tightening it is always safe and needs no
-        # permission; loosening it is the one thing an agent must never be able
-        # to do, and `landing start` was a wide-open route to exactly that --
-        # the gate only guards the boundary, so in NORMAL an agent could replace
-        # a 70% floor with 5% and keep going.
-        #
-        # POSIX rlimits solve the same problem the same way: a limit ratchets
-        # one direction, and going the other way needs privilege. Here the
-        # privilege is `/landing cancel`, which only a real user prompt can
-        # perform -- deliberately not a `--force` flag, because a flag is
-        # something the agent can type, and that is the whole point.
-        if floor < previous.floor_percent:
-            raise SystemExit(
-                f"A quota budget is already in force with a {previous.floor_percent:.1f}% floor "
-                f"on {previous.window} (task: {previous.task!r}). Refusing to lower it to "
-                f"{floor:.1f}%.\n"
-                "Tightening a floor is always allowed; loosening one is not, because the guard "
-                "would then be weaker than the user asked for.\n"
-                "To replace it, end the contract first: send `/landing cancel` "
-                "(Codex: `$landing cancel`) as a whole message, then start the new budget."
-            )
-
-    config = LandingConfig(
-        min_reserve_percent=args.min_reserve,
-        default_reserve_percent=args.default_reserve,
-        max_reserve_percent=args.max_reserve,
-        landing_tool_calls=args.landing_tool_calls,
-        safety_factor=args.safety_factor,
-        conserve_margin_percent=args.conserve_margin,
-        emergency_margin_percent=args.emergency_margin,
-        max_snapshot_age_seconds=args.max_snapshot_age_seconds,
-    )
-    session = TaskSession(
-        task=args.task,
-        provider=args.provider,
-        window=args.window,
-        floor_percent=floor,
-        started_remaining_percent=remaining,
-        mode=mode,
-        max_spend_percent=max_spend,
-        handoff_path=args.handoff,
-        cwd=str(Path(args.cwd or os.getcwd()).resolve()),
-        last_remaining_percent=remaining,
-        config=config,
-        floor_applies_to_all_windows=floor_everywhere,
-        started_remaining_by_window={
-            w.id: w.remaining_percent for w in snapshot.windows
-        },
-    )
-
-    if previous is not None and previous.provider == args.provider:
-        # Burn measurement belongs to the account, not to one budget. Dropping it
-        # reset the landing reserve from a measured value back to the 4% default
-        # -- biasing the reserve downwards, the unsafe direction, and starting
-        # the landing too late to finish a handoff. It also contradicted the
-        # contract that keeps a cancelled session on disk precisely so this
-        # history survives into the next budget.
-        #
-        # `segment_count` deliberately does NOT carry: a new budget is a new
-        # contract, and segment 1 of it is the honest number.
-        session.burn_samples = list(previous.burn_samples)
-        session.previous_tasks = (
-            previous.previous_tasks + ([previous.task] if previous.task else [])
-        )[-10:]
-
-    # The floor is a limit on every window, so a window already at or below it
-    # puts the budget in violation the moment it starts. Refusing here beats
-    # opening a session that immediately demands an emergency landing, and it
-    # surfaces the real situation while it is still free to act on.
-    #
-    # Each window is asked the same question the gate would ask on the first tool
-    # call, through the same two functions, so the pre-flight check and the guard
-    # cannot disagree. Comparing every window against the one absolute number
-    # derived from the budget window was wrong for `spend`, which is a per-window
-    # delta: with the five-hour window normally further burned than the weekly
-    # one, an ordinary `spend 15` was refused outright.
-    if floor_everywhere:
-        mode_word = "spend" if mode == "max_spend" else "leave"
-        shown = max_spend if mode == "max_spend" and max_spend is not None else floor
-        breached = []
-        for w in snapshot.windows:
-            limit = window_floor(session, w.id)
-            state, _ = window_pressure(
-                w.id, w.remaining_percent, limit, config.default_reserve_percent, config
-            )
-            if state == LandingState.EMERGENCY:
-                breached.append((w, limit))
-        if breached:
-            detail = ", ".join(
-                f"{w.id} at {w.remaining_percent:.1f}% (floor {limit:.1f}%)"
-                for w, limit in breached
-            )
-            raise SystemExit(
-                f"The requested floor has already been reached on {detail}. "
-                "The floor applies to every quota window your plan exposes. Either lower "
-                f"the floor, or scope it to one window: --window {args.window}, or "
-                f"`{mode_word} {_WINDOW_WORD.get(args.window, args.window)} {shown:g}` "
-                "in a /landing invocation."
-            )
-
-    store.save_session(session)
-    store.save_snapshot(snapshot)
-    decision = evaluate(session, remaining)
-    scope_windows = [w.id for w in snapshot.windows] if floor_everywhere else [args.window]
-    # "If you change state, tell the user." Replacing a budget that was already
-    # in force is exactly the result a user cannot model from their own input,
-    # so it is named rather than left to be inferred from a changed number.
-    replaced = None
-    if previous is not None:
-        replaced = {
-            "previous_floor_percent": round(previous.floor_percent, 2),
-            "previous_task": previous.task,
-            "previous_state": previous.state.value,
-            "was_cancelled": previous.is_cancelled,
-            "burn_samples_carried_over": len(session.burn_samples),
-        }
-    print(json.dumps({
-        "replaced_budget": replaced,
-        "provider": args.provider,
-        "window": args.window,
-        "starting_remaining_percent": round(remaining, 2),
-        "final_floor_percent": round(floor, 2),
-        "initial_landing_reserve_percent": round(decision.reserve_percent, 2),
-        "development_stops_near_percent": round(decision.development_floor_percent, 2),
-        "handoff": args.handoff,
-        "mode": mode,
-        "floor_applies_to": scope_windows,
-        # Always restated as a REMAINING floor, whichever way the user phrased it,
-        # so "leave" and "spend" can never be silently swapped. Shown before any
-        # work starts, so a misunderstanding surfaces while it is still free.
-        "interpretation": _interpretation(
-            mode, floor, max_spend, remaining, args.window, scope_windows
-        ),
-    }, indent=2))
+        payload = start_budget(
+            store,
+            snapshot,
+            provider=args.provider,
+            task=args.task,
+            window=args.window,
+            preserve=args.preserve,
+            max_spend=args.max_spend,
+            handoff=args.handoff,
+            cwd=args.cwd,
+            config=LandingConfig(
+                min_reserve_percent=args.min_reserve,
+                default_reserve_percent=args.default_reserve,
+                max_reserve_percent=args.max_reserve,
+                landing_tool_calls=args.landing_tool_calls,
+                safety_factor=args.safety_factor,
+                conserve_margin_percent=args.conserve_margin,
+                emergency_margin_percent=args.emergency_margin,
+                max_snapshot_age_seconds=args.max_snapshot_age_seconds,
+            ),
+        )
+    except BudgetRefused as refusal:
+        raise SystemExit(str(refusal)) from refusal
+    print(json.dumps(payload, indent=2))
     return 0
 
 
@@ -519,10 +325,15 @@ def cmd_hook_user_prompt(args: argparse.Namespace) -> int:
     store = _store(args)
     try:
         payload = json.load(sys.stdin)
-        result = user_prompt(payload, store)
+        if args.platform == "codex":
+            # A budget opened here needs a reading to open against, and on a
+            # fresh session nothing has refreshed one yet.
+            _refresh_codex_if_needed(store, args.refresh_after_seconds, args.executable)
+        result = user_prompt(payload, store, provider=args.platform)
     except Exception as error:  # noqa: BLE001
-        # Fail safe for the same reason: this hook only renews a segment, so
-        # skipping it keeps the previous task stopped rather than reopening it.
+        # Fail safe: this hook cancels, releases, or opens a budget. Doing
+        # nothing leaves the previous state in force, which is never the
+        # dangerous direction -- unlike the pre-tool gate, which must deny.
         print(f"landing: user-prompt hook error: {error}", file=sys.stderr)
         result = {}
     print(json.dumps(result, separators=(",", ":")))
@@ -847,9 +658,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "hook-user-prompt",
-        help="UserPromptSubmit gate for explicit user cancellation",
+        help="UserPromptSubmit gate: opens a budget from the invocation, or cancels one",
     )
     p.add_argument("--platform", choices=["claude", "codex"], required=True)
+    p.add_argument("--executable", default="codex", help="path to Codex when it is not on PATH")
+    p.add_argument("--refresh-after-seconds", type=float, default=60.0)
     p.set_defaults(func=cmd_hook_user_prompt)
 
     p = sub.add_parser("status", help="show the current budget decision and observed burn-rate runway")

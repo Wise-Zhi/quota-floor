@@ -156,7 +156,7 @@ def test_every_example_in_the_docs_actually_parses():
     import re
     from pathlib import Path
 
-    from agent_landing.invocation import EXAMPLES
+    from agent_landing.invocation import EXAMPLES, extract_invocation
 
     # The packaged assets are the source of truth; the in-tree copies are pinned
     # to them by test_installation. A missing path would silently skip, so they
@@ -175,8 +175,18 @@ def test_every_example_in_the_docs_actually_parses():
         if not path.exists():
             continue
         for line in path.read_text(encoding="utf-8").splitlines():
-            for match in re.finditer(r"[`/$]?[/$]landing ([a-z0-9].*?)`", line):
-                argument = match.group(1).split("`")[0].strip()
+            # Scrape the whole inline-code span, not just the tail after the
+            # marker, and read it the way the hook does. Task text may sit
+            # *before* the marker -- `继续/landing spend 20` -- and taking only
+            # the tail turned a valid documented example into `spend 20`, which
+            # is correctly refused for having no task.
+            for span in re.findall(r"`([^`]*[/$]landing[^`]*)`", line):
+                extracted = extract_invocation(span)
+                if extracted is None:
+                    continue
+                argument = extracted[0].strip()
+                if not argument:
+                    continue  # prose naming the marker itself, not an example
                 if argument.startswith(("start", "status", "invoke", "complete", "resume")):
                     continue
                 found.append(argument)

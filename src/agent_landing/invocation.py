@@ -211,6 +211,44 @@ def _split_options_and_task(tokens: list[str]) -> tuple[list[str], list[str]]:
     return leading, rest
 
 
+#: `/landing` on Claude Code, `$landing` on Codex. The lookahead keeps path
+#: segments out: `~/.agents/skills/landing/` contains the letters but is not an
+#: invocation, and an invocation is always followed by its arguments or nothing.
+_MARKER = re.compile(r"[/$]landing\b(?=\s|$)", re.IGNORECASE)
+
+
+def extract_invocation(prompt: str) -> tuple[str, bool] | None:
+    """Pull a Landing invocation out of a whole user message.
+
+    Returns ``(arguments, authoritative)``, or None when the message does not
+    invoke Landing at all. Text before the marker is task text -- people write
+    "继续/landing spend 20" -- and the parser already accepts settings on either
+    side of the task, so the two halves are simply joined.
+
+    `authoritative` is True only when the message *starts* with the marker. That
+    distinction decides what a parse failure means, and it is the whole reason
+    this returns a flag:
+
+    - Starts with the marker: unambiguously an invocation. A failure to parse is
+      a typo in a real budget request, and must be refused loudly -- silently
+      not guarding is the failure this project ranks worst.
+    - Marker mid-message: could just be prose about the command ("why does
+      /landing cancel not work?"). Acting on a failed parse there would block
+      ordinary conversation, so a failure means "this was not an invocation".
+
+    The residual gap is a typo in a mid-message invocation, which is left alone
+    rather than refused. That is the safer side of an unavoidable trade: the
+    alternative makes the tool impossible to talk about.
+    """
+    match = _MARKER.search(prompt or "")
+    if not match:
+        return None
+    before = prompt[: match.start()].strip()
+    after = prompt[match.end() :].strip()
+    arguments = f"{before} {after}".strip()
+    return arguments, match.start() == 0
+
+
 def parse_invocation(raw: str) -> ParsedInvocation:
     tokens = (raw or "").strip().split()
     if not tokens:
