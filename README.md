@@ -4,6 +4,18 @@
 
 > Alpha MVP: Claude Code + OpenAI Codex.
 
+**Verification status, honestly.** Neither host has a fully proven end-to-end
+path yet, and they are short of it in opposite places:
+>
+> | | Reads real quota | Enforces the floor |
+> | --- | --- | --- |
+> | **Claude Code** | only where the status line runs — see below | **verified** 2026-08-27: a blocked write did not run |
+> | **Codex** | **verified** on codex-cli 0.150.0-alpha.8 | unverified; some builds have reported deny-path regressions |
+>
+> Everything degrades safe rather than silently: unknown quota conserves, it is
+> never read as 100%. But do not yet rely on Landing as the only thing standing
+> between you and an exhausted weekly quota.
+
 ## Why
 
 Coding agents know how to keep working until a task is done. They are much worse at preserving *account quota* for the next task. A fixed "stop at 5%" threshold is also wrong: writing tests, inspecting the diff, and producing a useful handoff consumes quota too.
@@ -209,7 +221,28 @@ Claude Code's status-line payload exposes the base `five_hour` and `seven_day` u
 
 See [`examples/claude/settings.json`](examples/claude/settings.json).
 
-Important current limitation: Claude Code may have model-scoped weekly limits that are visible in `/usage` but are not always projected into statusLine. Agent Landing never treats an unknown limit as 100% available.
+### The status line is the only Claude quota source, and it does not run everywhere
+
+Claude Code reports `rate_limits` to the status line and nowhere else, so that
+one command is the entire Claude quota path. **Some Claude Code surfaces never
+invoke it.** Verified on Windows on 2026-08-27: the `PreToolUse`, `PostToolUse`
+and `UserPromptSubmit` hooks all ran normally for a whole session while the
+configured `statusLine` command was never called once.
+
+Where that happens the enforcement half still works — the gate blocks writes,
+and it was verified doing so on the same session — but it has no quota to
+enforce against. The guard reports `QUOTA UNKNOWN`, stays in `CONSERVE`, and
+never fabricates headroom, so it fails safe. It cannot hold a floor.
+
+Practically: **Landing's Claude support is only complete in the terminal CLI.**
+Run `landing doctor` and read the `quota_source` line. `pending` after a session
+of normal work means this is the situation you are in.
+
+Two further limits on the same path: `rate_limits` appears only for Claude.ai
+subscriptions and only after the first API response of a session, so API-key
+users cannot be guarded at all; and model-scoped weekly limits visible in
+`/usage` are not always projected into the status line. An unknown limit is
+never treated as 100% available.
 
 ## Codex
 
@@ -343,7 +376,15 @@ If quota reaches the emergency margin, Agent Landing writes a lower-fidelity but
 
 ## v0.1 limitations / next work
 
-- Validate against real Claude Code and Codex installations on macOS/Linux/Windows.
+- Verify that Codex acts on a `PreToolUse` deny. Its hooks load, are trusted, and
+  its quota reads correctly; only enforcement is untested. See the caveat below.
+- Find out why some Claude Code surfaces never invoke the status line, and
+  whether quota can be reached any other way on them. Until then Landing's
+  Claude support is complete only in the terminal CLI.
+- Validate on macOS and Linux. Everything verified so far was on Windows, where
+  Application Control additionally blocks the `landing` console script and
+  Codex's shell helper, so all commands must go through `python -m
+  agent_landing.cli`.
 - Add task-history/burn-rate charts and a compact cross-provider statusline mode.
 - Add model-scoped Claude limits when/if the runtime exposes them to statusLine.
 - Make landing-safe test commands configurable instead of using a minimal built-in allowlist.
