@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 from pathlib import Path
 from time import time
 from typing import Any
@@ -80,17 +81,67 @@ def handoff_landed(payload: dict[str, Any], session: TaskSession) -> bool:
 # the allowlist is consulted, then require a full match rather than a prefix.
 _SHELL_CONTROL = re.compile(r"[;&|<>`$(){}\n\r]")
 
-_SAFE_LANDING_COMMANDS = (
-    r"git\s+(status|diff|log\s+-1|branch\s+--show-current|rev-parse)(\s+\S+)*",
-    r"(pytest|python\s+-m\s+pytest)(\s+\S+)*",
+#: Flags accepted for pytest. Nothing here writes a file.
+_PYTEST_FLAGS = frozenset({
+    "-q", "--quiet", "-x", "--exitfirst", "-k", "-m", "-p", "--no-header",
+    "--tb", "--maxfail", "--co", "--collect-only", "--lf", "--last-failed",
+})
+
+#: (command prefix, flags allowed after it). The prefix must match exactly and
+#: every remaining token that looks like a flag must appear in the set.
+#:
+#: Allowlisting the *command* while accepting `(\s+\S+)*` for its arguments is a
+#: blocklist wearing an allowlist's name, and it leaked twice: first through
+#: chaining (`git status && <any write>`), then through writing flags
+#: (`git diff --output=X`, `pytest --junitxml=X`) that turn a read-only command
+#: into an arbitrary-path write. Unknown flags are refused by default here for
+#: the same reason unknown quota is not treated as 100%.
+_SAFE_LANDING_COMMANDS: tuple[tuple[tuple[str, ...], frozenset[str]], ...] = (
+    (("git", "status"), frozenset({"-s", "--short", "--porcelain", "-b", "--branch"})),
+    (("git", "diff"), frozenset({
+        "--stat", "--name-only", "--name-status", "--cached", "--staged", "--unified",
+    })),
+    (("git", "log", "-1"), frozenset({"--oneline", "--stat", "--format", "--pretty", "--no-patch"})),
+    (("git", "branch", "--show-current"), frozenset()),
+    (("git", "rev-parse"), frozenset({"--show-toplevel", "--abbrev-ref", "--git-dir", "--verify"})),
+    (("pytest",), _PYTEST_FLAGS),
+    (("python", "-m", "pytest"), _PYTEST_FLAGS),
 )
 
 
 def is_safe_landing_command(command: str) -> bool:
+    """Is this shell command read-only enough to run while landing?
+
+    Operands (paths, `-k` expressions) pass freely because they cannot write on
+    their own; only tokens that look like flags are checked, and an unrecognized
+    flag is a refusal rather than a pass.
+    """
     command = command.strip()
     if not command or _SHELL_CONTROL.search(command):
         return False
-    return any(re.fullmatch(pattern, command) for pattern in _SAFE_LANDING_COMMANDS)
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        # Unbalanced quoting: refuse rather than guess at what it would run as.
+        return False
+    if not tokens:
+        return False
+
+    for prefix, allowed_flags in _SAFE_LANDING_COMMANDS:
+        if tuple(tokens[: len(prefix)]) != prefix:
+            continue
+        rest = tokens[len(prefix):]
+        return all(
+            _flag_name(token) in allowed_flags
+            for token in rest
+            if token.startswith("-")
+        )
+    return False
+
+
+def _flag_name(token: str) -> str:
+    """`--tb=short` -> `--tb`, so a flag is judged by its name, not its value."""
+    return token.split("=", 1)[0]
 
 
 def is_safe_landing_tool(payload: dict[str, Any], session: TaskSession) -> bool:

@@ -103,3 +103,54 @@ def test_stale_snapshot_does_not_resurrect_a_stopped_session(tmp_path):
     session.state = LandingState.STOPPED
     session.stop_reason = "landed"
     assert evaluate(session, 91.0, snapshot_age_seconds=3 * 86400).state == LandingState.STOPPED
+
+
+# --- arguments are allowlisted too, not just the command --------------------
+
+@pytest.mark.parametrize("command", [
+    # Writing flags turn a read-only command into an arbitrary-path write.
+    "git diff --output=pwned.txt",
+    "git diff -o pwned.txt",
+    "git log -1 --output=pwned.txt",
+    "pytest --junitxml=pwned.xml",
+    "python -m pytest --junitxml=pwned.xml",
+    "pytest --junit-xml=pwned.xml",
+    "pytest --result-log=pwned.log",
+    # An unrecognized flag is refused rather than passed through, so the next
+    # writing flag anyone adds to git or pytest is already covered.
+    "pytest --some-future-flag=pwned.txt",
+    "git status --some-future-flag=pwned.txt",
+])
+def test_a_writing_flag_cannot_ride_along_on_an_allowlisted_command(command):
+    """Regression for the second leak of one bug class.
+
+    The check allowlisted the command and then accepted any arguments, which is
+    a blocklist wearing an allowlist's name. It leaked first through chaining
+    (`git status && <any write>`) and then through these. Flags are now
+    default-deny, so the class is closed rather than patched twice.
+    """
+    assert is_safe_landing_command(command) is False
+
+
+@pytest.mark.parametrize("command", [
+    "git status",
+    "git status --short",
+    "git status -s -b",
+    "git diff",
+    "git diff --stat",
+    "git diff --cached src/x.py",
+    "git log -1 --format=%H",
+    "git branch --show-current",
+    "git rev-parse --show-toplevel",
+    "pytest",
+    "pytest -q",
+    "pytest --tb=short tests/",
+    "python -m pytest -x -k auth",
+])
+def test_the_inspection_an_agent_needs_to_write_a_handoff_still_works(command):
+    """Default-deny must not cost the agent the reads it needs in order to land."""
+    assert is_safe_landing_command(command) is True
+
+
+def test_unbalanced_quoting_is_refused_rather_than_guessed_at():
+    assert is_safe_landing_command('git status --short "') is False

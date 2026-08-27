@@ -275,8 +275,15 @@ pipx install agent-landing
 The distribution is `agent-landing`; the command it installs is `landing`.
 
 `landing install` is also the update command: run it again after upgrading the
-package. It installs the skill and hooks at user scope, so no copying is needed
-inside each repository:
+package. The installed skill is a *rendered* copy — absolute interpreter paths
+are substituted in — so a package upgrade leaves the old one in place. Skipping
+this does not weaken enforcement, which lives in the hooks, but it can silently
+lose plain-language triggering: a phrase like "leave me 70%" then arms nothing
+while the user believes it did. `landing doctor` reports a stale copy and names
+the command that fixes it.
+
+It installs the skill and hooks at user scope, so no copying is needed inside
+each repository:
 
 | Host | Persistent skill | Persistent configuration |
 | --- | --- | --- |

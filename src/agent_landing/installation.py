@@ -630,7 +630,15 @@ def doctor_host(
     checks.append({
         "name": "skill_content",
         "status": "ok" if assets_match else "error",
-        "detail": "packaged skill is current" if assets_match else "installed skill is missing or stale",
+        # Name the fix. The installed skill is a *rendered* copy, so upgrading the
+        # package leaves it behind, and a stale copy can silently lose plain
+        # language triggering while the hooks keep enforcing -- the user then
+        # believes a phrase like "leave me 70%" armed a budget when it did not.
+        "detail": (
+            "packaged skill is current" if assets_match
+            else f"installed skill is stale or missing; re-run `landing install --host {host}` "
+                 "(a package upgrade does not refresh it)"
+        ),
     })
     try:
         config = _load_json(config_path)
