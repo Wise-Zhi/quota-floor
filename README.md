@@ -4,17 +4,18 @@
 
 > Alpha MVP: Claude Code + OpenAI Codex.
 
-**Verification status, honestly.** Neither host has a fully proven end-to-end
-path yet, and they are short of it in opposite places:
+**Verification status, honestly.** Codex has one fully proven Windows path;
+Claude Code is still complete only on surfaces where its status line runs:
 >
 > | | Reads real quota | Enforces the floor |
 > | --- | --- | --- |
 > | **Claude Code** | only where the status line runs — see below | **verified** 2026-08-27: a blocked write did not run |
-> | **Codex** | **verified** on codex-cli 0.150.0-alpha.8 | unverified; some builds have reported deny-path regressions |
+> | **Codex** | **verified** on codex-cli 0.150.0-alpha.8 | **verified** 2026-08-28 on Windows: `apply_patch` was denied and no file landed |
 >
 > Everything degrades safe rather than silently: unknown quota conserves, it is
-> never read as 100%. But do not yet rely on Landing as the only thing standing
-> between you and an exhausted weekly quota.
+> never read as 100%. Host enforcement remains version-specific; rerun the
+> integration check when upgrading Codex rather than assuming another build has
+> the same deny behavior.
 
 ## Why
 
@@ -392,8 +393,6 @@ If quota reaches the emergency margin, Agent Landing writes a lower-fidelity but
 
 ## v0.1 limitations / next work
 
-- Verify that Codex acts on a `PreToolUse` deny. Its hooks load, are trusted, and
-  its quota reads correctly; only enforcement is untested. See the caveat below.
 - Find out why some Claude Code surfaces never invoke the status line, and
   whether quota can be reached any other way on them. Until then Landing's
   Claude support is complete only in the terminal CLI.
@@ -408,9 +407,17 @@ If quota reaches the emergency margin, Agent Landing writes a lower-fidelity but
 - Add native marketplace/plugin distribution as an optional channel after the
   cross-host package installer is proven.
 
-### Codex enforcement caveat
+### Codex enforcement boundary
 
-Codex's hook schema supports `PreToolUse` allow/deny decisions, but current builds have open bug reports where a deny can fail to stop some `apply_patch` writes. Agent Landing therefore treats Codex v0.1 enforcement as best-effort until the host fixes that path. The quota policy and telemetry remain useful, but the README does not claim a stronger guarantee than the runtime can provide.
+Codex enforcement was verified on Windows with codex-cli
+`0.150.0-alpha.8` on 2026-08-28. A no-budget control run could create a file;
+with the same write path in LAND, Codex reported that the `PreToolUse` hook
+blocked `apply_patch`, and the target file did not exist afterwards. This proves
+the tested host build acts on Landing's deny rather than merely displaying it.
+
+That result is deliberately version-scoped. Other Codex builds have reported
+deny-path regressions, so an upgrade is not assumed safe until the same control
+and LAND pair is rerun.
 
 ## License
 

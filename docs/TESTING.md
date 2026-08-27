@@ -231,6 +231,13 @@ Do not intentionally burn account quota just to hit a threshold. Prefer a floor 
 
 ## Codex integration test
 
+The Windows integration was last completed on codex-cli `0.150.0-alpha.8` on
+2026-08-28. The control run, with no budget, created a file through
+`apply_patch`. The LAND run used the same write path; Codex reported the
+`PreToolUse` refusal and the file remained absent. Record all three facts when
+repeating the test -- error text alone cannot distinguish a real host denial
+from a model that chose not to write.
+
 ### Composer discovery check
 
 Test composer discovery separately from hook enforcement:

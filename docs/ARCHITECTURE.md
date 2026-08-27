@@ -284,7 +284,11 @@ The provider interface is intentionally small: convert provider-specific quota d
 - Claude `rate_limits` requires a Claude.ai subscription and appears only after the first API response of a session; API-key users cannot be guarded.
 - Claude model-specific limits may not all be available through statusLine.
 - **Some Claude Code surfaces never invoke the status line at all.** Verified on Windows on 2026-08-27: the `PreToolUse`, `PostToolUse` and `UserPromptSubmit` hooks all ran, while the configured `statusLine` command was never called once across a full session. Because the status line is Landing's only Claude quota source, the Claude guard has no quota on such a surface and stays in `CONSERVE` / `QUOTA UNKNOWN` — every other check reports a healthy install. `landing doctor` reports this as `quota_source: pending`; see below.
-- Codex hook enforcement depends on host behavior; some current builds have reported deny-path regressions for writes such as `apply_patch`.
+- Codex hook enforcement depends on host behavior. Verified on Windows with
+  codex-cli `0.150.0-alpha.8` on 2026-08-28: a no-budget control could create a
+  file, while LAND blocked the same `apply_patch` and no target file landed.
+  Keep this claim version-scoped because other builds have reported deny-path
+  regressions.
 - Codex exposes `UserPromptSubmit` as of codex-cli 0.149.0-alpha.4.3, verified via `hooks/list` on its app-server. On builds without it, segment renewal is manual via `landing resume`.
 - Burn-rate runway uses wall-clock intervals and excludes long idle gaps; active-compute time is not yet measured directly.
 - Installer/config merging and real cross-platform integration testing are still pending.
