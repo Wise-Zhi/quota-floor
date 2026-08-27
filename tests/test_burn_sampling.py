@@ -99,3 +99,55 @@ def test_reserve_scales_with_landing_tool_calls(tmp_path):
     cheap = LandingConfig(landing_tool_calls=2, max_reserve_percent=99.0)
     costly = LandingConfig(landing_tool_calls=16, max_reserve_percent=99.0)
     assert estimate_landing_reserve(samples, costly) > estimate_landing_reserve(samples, cheap)
+
+
+def test_one_tool_call_counts_once_even_if_two_hook_layers_fire(tmp_path):
+    """Codex loads hooks from user scope *and* a project `.codex/hooks.json`.
+
+    Both fire for a single tool call. Counting each one halves the measured
+    per-tool-call burn, which halves the landing reserve and makes the agent
+    land later than it can afford to -- a silent under-estimate, which is the
+    dangerous direction.
+    """
+    from agent_landing.hooks import pre_tool
+
+    store = StateStore(tmp_path)
+    store.save_snapshot(QuotaSnapshot(
+        provider="codex",
+        windows=[QuotaWindow(id="five_hour", used_percent=10.0)],
+        sampled_at=time(),
+    ))
+    store.save_session(TaskSession(
+        task="t", provider="codex", window="five_hour", floor_percent=50,
+        started_remaining_percent=90, cwd=str(tmp_path),
+    ))
+    payload = {
+        "tool_name": "Read", "tool_input": {"file_path": "x.py"},
+        "tool_use_id": "call_same",
+    }
+    pre_tool(payload, store)
+    pre_tool(payload, store)
+    assert store.load_session().tool_calls_since_snapshot == 1
+
+    pre_tool({**payload, "tool_use_id": "call_next"}, store)
+    assert store.load_session().tool_calls_since_snapshot == 2
+
+
+def test_a_host_that_sends_no_tool_use_id_still_counts(tmp_path):
+    """Missing identity must over-estimate the reserve, never under-estimate it."""
+    from agent_landing.hooks import pre_tool
+
+    store = StateStore(tmp_path)
+    store.save_snapshot(QuotaSnapshot(
+        provider="codex",
+        windows=[QuotaWindow(id="five_hour", used_percent=10.0)],
+        sampled_at=time(),
+    ))
+    store.save_session(TaskSession(
+        task="t", provider="codex", window="five_hour", floor_percent=50,
+        started_remaining_percent=90, cwd=str(tmp_path),
+    ))
+    payload = {"tool_name": "Read", "tool_input": {"file_path": "x.py"}}
+    pre_tool(payload, store)
+    pre_tool(payload, store)
+    assert store.load_session().tool_calls_since_snapshot == 2

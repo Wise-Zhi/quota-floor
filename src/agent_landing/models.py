@@ -139,6 +139,11 @@ class TaskSession:
     # Quota burned per tool call, not per snapshot interval.
     burn_samples: list[float] = field(default_factory=list)
     tool_calls_since_snapshot: int = 0
+    #: Last tool call already counted, so a duplicate hook registration cannot
+    #: inflate the count. Two layers (user scope plus a project `.codex/hooks.json`)
+    #: both fire for one tool call; counting twice halves the measured per-call
+    #: burn, which halves the landing reserve and makes the agent land too late.
+    last_counted_tool_use_id: str | None = None
     config: LandingConfig = field(default_factory=LandingConfig)
     stop_reason: str | None = None
     completed_at_remaining_percent: float | None = None

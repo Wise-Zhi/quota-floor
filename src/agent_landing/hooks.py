@@ -220,14 +220,17 @@ def resolve_budget_window(session: TaskSession, snapshot: QuotaSnapshot) -> Quot
 def evaluate_current(
     store: StateStore,
     count_tool_call: bool = False,
+    tool_use_id: str | None = None,
 ) -> tuple[TaskSession, PolicyDecision] | None:
     session = store.load_session()
     if not session or session.is_cancelled:
         # No budget was requested, or the user ended the one they had. Either way
         # the guard has no mandate and must stay out of the way entirely.
         return None
-    if count_tool_call:
+    if count_tool_call and not _already_counted(session, tool_use_id):
         session.tool_calls_since_snapshot += 1
+        if tool_use_id:
+            session.last_counted_tool_use_id = tool_use_id
 
     snapshot = store.load_snapshot()
     window = None
@@ -302,6 +305,18 @@ def gate_failure(store: StateStore, error: BaseException) -> dict[str, Any]:
     return hook_json(decision="deny", reason=reason)
 
 
+def _already_counted(session: TaskSession, tool_use_id: str | None) -> bool:
+    """Has this exact tool call been counted by an earlier hook invocation?
+
+    A host can invoke the same hook more than once for one tool call when the
+    config is registered at two scopes. Without an identity to compare, the
+    duplicate looks like extra work and silently deflates the per-call burn.
+    Hosts that send no id keep the old behaviour, which over- rather than
+    under-estimates the reserve.
+    """
+    return bool(tool_use_id) and session.last_counted_tool_use_id == tool_use_id
+
+
 def pre_tool(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
     """Evaluate the gate for one tool call, serialized against concurrent hooks.
 
@@ -320,7 +335,11 @@ def _pre_tool_locked(payload: dict[str, Any], store: StateStore) -> dict[str, An
     # Deliberately does NOT renew a completed segment: a tool call cannot prove a
     # new user instruction, so renewing here would let the agent work straight
     # past `landing complete` and spend the budget it was told to return.
-    current = evaluate_current(store, count_tool_call=True)
+    current = evaluate_current(
+        store,
+        count_tool_call=True,
+        tool_use_id=str(payload.get("tool_use_id") or payload.get("toolUseId") or "") or None,
+    )
     if not current:
         return {}
     session, decision = current
