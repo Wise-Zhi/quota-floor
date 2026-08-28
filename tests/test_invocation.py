@@ -107,9 +107,6 @@ def test_dropping_the_keyword_cannot_silently_invert_the_meaning():
     ("", "no arguments"),
     ("-- just a task", "no quota percentage"),
     ("fix the tests", "no quota percentage"),
-    ("leave 70", "no task"),
-    ("spend 15 --", "no task"),
-    ("leave 70 --   ", "no task"),
     ("leave 150 -- x", "between 0 and 100"),
     ("leave 70 80 -- x", "more than one quota percentage"),
     ("leave weekly 5h 70 -- x", "more than one quota window"),
@@ -135,9 +132,23 @@ def test_near_miss_offers_a_valid_suggestion_without_applying_it():
     assert not parsed.ok, "a suggestion must never be auto-applied"
 
 
-def test_missing_task_suggestion_keeps_the_users_own_mode():
-    assert "spend 15" in parse_invocation("spend 15").suggestion
-    assert "leave 70" in parse_invocation("leave 70").suggestion
+@pytest.mark.parametrize("raw", ["leave 70", "spend 15", "spend 15 --", "leave 5h 30"])
+def test_a_budget_may_be_attached_to_work_already_under_way(raw):
+    """Requiring a task made the user restate something they had already said.
+
+    The task is a label -- the handoff title, the history, the status line. No
+    part of the policy or the gate reads it, unlike `leave`/`spend`, which decide
+    what the number means. So `/landing spend 20` on its own is a legitimate way
+    to put a floor under the work in progress.
+    """
+    parsed = parse_invocation(raw)
+    assert parsed.ok, parsed.error
+    assert parsed.task == ""
+    assert parsed.percent is not None
+
+
+def test_a_task_is_still_kept_when_one_is_given():
+    assert parse_invocation("spend 15 fix the tests").task == "fix the tests"
 
 
 def test_parser_is_shared_so_both_hosts_agree():

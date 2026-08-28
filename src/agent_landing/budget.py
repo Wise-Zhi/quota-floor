@@ -150,7 +150,8 @@ def start_budget(
         if floor < previous.floor_percent:
             raise BudgetRefused(
                 f"A quota budget is already in force with a {previous.floor_percent:.1f}% floor "
-                f"on {previous.window} (task: {previous.task!r}). Refusing to lower it to "
+                f"on {previous.window}{f' (task: {previous.task!r})' if previous.task else ''}. "
+                f"Refusing to lower it to "
                 f"{floor:.1f}%.\n"
                 "Tightening a floor is always allowed; loosening one is not, because the guard "
                 "would then be weaker than the user asked for.\n"

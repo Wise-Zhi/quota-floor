@@ -326,13 +326,11 @@ def parse_invocation(raw: str) -> ParsedInvocation:
         )
 
     mode = modes[0]
+    # The task is a label, not a control: nothing in the policy or the gate reads
+    # it. Demanding it meant a user who had already said what they wanted had to
+    # say it again just to attach a budget -- `/landing spend 20` on its own is
+    # the natural way to put a floor under work already under way.
     task = " ".join(task_tokens).strip()
-    if not task:
-        mode_word = "spend" if mode == "max_spend" else "leave"
-        return _fail(
-            "no task was given after the quota settings.",
-            f"/landing {mode_word} {percent:g} <describe the task here>",
-        )
 
     return ParsedInvocation(
         ok=True,

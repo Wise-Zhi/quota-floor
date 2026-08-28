@@ -636,7 +636,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--spend", "--max-spend", dest="max_spend", type=float,
         help="maximum percentage points this task may spend",
     )
-    p.add_argument("--task", required=True)
+    p.add_argument(
+        "--task",
+        default="",
+        help="optional label for the handoff; the budget does not need one",
+    )
     _add_budget_tuning_args(p)
     p.set_defaults(func=cmd_start)
 

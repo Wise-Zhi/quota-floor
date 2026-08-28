@@ -32,6 +32,12 @@ def reserve_handoff_path(session: TaskSession) -> Path:
     return path
 
 
+NO_TASK_RECORDED = (
+    "Not recorded at invocation: the budget was attached to work already under way. "
+    "See the conversation and the repository state below."
+)
+
+
 def _git(cwd: Path, *args: str) -> str:
     try:
         result = subprocess.run(
@@ -72,7 +78,7 @@ def write_fallback_handoff(session: TaskSession, decision: PolicyDecision) -> Pa
     content = f"""# Agent Handoff (Emergency Fallback)
 
 ## Original Task
-{session.task}
+{session.task or NO_TASK_RECORDED}
 
 ## Why Work Stopped
 The quota guard entered **{decision.state.value}** mode.
