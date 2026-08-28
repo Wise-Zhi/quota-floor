@@ -23,4 +23,3 @@
 - Test an isolated installation and build the wheel.
 - Verify the real user-level Codex discovery/trust state without a model turn.
 - Review the diff and commit only installer-owned changes.
-

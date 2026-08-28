@@ -8,6 +8,7 @@ from pathlib import Path
 from time import time
 from typing import Any
 
+from . import __version__
 from .models import QuotaSnapshot, QuotaWindow
 
 
@@ -199,7 +200,7 @@ class CodexAppServerProvider:
                     "clientInfo": {
                         "name": "agent_landing",
                         "title": "Agent Landing",
-                        "version": "0.1.0",
+                        "version": __version__,
                     }
                 },
             }

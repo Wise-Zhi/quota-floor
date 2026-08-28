@@ -3,7 +3,7 @@ name: landing
 description: This skill should be used when the user asks to "leave me 70% quota", "spend at most 15% on this", "stop before my weekly quota drops below 40%", or otherwise asks for a coding task to be run under an account-quota budget with a hard floor on what must remain afterwards. Syntax: `/landing leave 70 refactor auth` stops while at least 70% still remains; `/landing spend 20 fix the tests` spends at most 20 percentage points.
 argument-hint: '<leave|spend> [weekly|5h] <percent> [task]'
 allowed-tools: Bash(landing *)
-version: 0.1.0
+version: 0.1.0a1
 ---
 
 The quota budget for this instruction is normally **already open**. A

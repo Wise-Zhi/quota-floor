@@ -97,4 +97,3 @@ actually removed.
   channel later; it is not required for the cross-host installer.
 - Codex may add a first-party trust/install API later. Until then review remains
   an explicit UI action.
-

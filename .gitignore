@@ -5,5 +5,5 @@ __pycache__/
 .pytest_cache/
 dist/
 .landing/
-AGENT_HANDOFF.md
+AGENT_HANDOFF*.md
 .DS_Store

@@ -10,7 +10,7 @@ Claude Code is still complete only on surfaces where its status line runs:
 > | | Reads real quota | Enforces the floor |
 > | --- | --- | --- |
 > | **Claude Code** | only where the status line runs — see below | **verified** 2026-08-27: a blocked write did not run |
-> | **Codex** | **verified** on codex-cli 0.150.0-alpha.8 | **verified** 2026-08-28 on Windows: `apply_patch` was denied and no file landed |
+> | **Codex** | **verified** on codex-cli 0.150.0-alpha.12.2 | **verified** 2026-08-29 on Windows: implementation patches were denied while the reserved handoff patch landed |
 >
 > Everything degrades safe rather than silently: unknown quota conserves, it is
 > never read as 100%. Host enforcement remains version-specific; rerun the
@@ -428,10 +428,13 @@ If quota reaches the emergency margin, Agent Landing writes a lower-fidelity but
 ### Codex enforcement boundary
 
 Codex enforcement was verified on Windows with codex-cli
-`0.150.0-alpha.8` on 2026-08-28. A no-budget control run could create a file;
+`0.150.0-alpha.12.2` on 2026-08-29. A no-budget control run could create a file;
 with the same write path in LAND, Codex reported that the `PreToolUse` hook
-blocked `apply_patch`, and the target file did not exist afterwards. This proves
-the tested host build acts on Landing's deny rather than merely displaying it.
+blocked `apply_patch`, and the target file did not exist afterwards. A second
+LAND run allowed an `apply_patch` that touched only the reserved
+`AGENT_HANDOFF.md`; the file landed and `PostToolUse` stopped the session. This
+proves the tested host build acts on both sides of Landing's gate rather than
+merely displaying its decision.
 
 That result is deliberately version-scoped. Other Codex builds have reported
 deny-path regressions, so an upgrade is not assumed safe until the same control

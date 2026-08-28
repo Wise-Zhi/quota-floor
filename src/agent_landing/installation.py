@@ -16,6 +16,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 from .providers import find_codex_executable
 from .state import resolve_state_root
 
@@ -835,7 +836,13 @@ def _codex_inventory(executable: str, timeout: float = 10.0) -> dict[int, dict[s
         initialize = {
             "method": "initialize",
             "id": 1,
-            "params": {"clientInfo": {"name": "landing-doctor", "title": "Landing doctor", "version": "0.1.0"}},
+            "params": {
+                "clientInfo": {
+                    "name": "landing-doctor",
+                    "title": "Landing doctor",
+                    "version": __version__,
+                }
+            },
         }
         process.stdin.write(json.dumps(initialize) + "\n")
         process.stdin.flush()

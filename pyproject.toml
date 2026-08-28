@@ -4,18 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-landing"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "Quota-budgeted graceful landing for coding agents."
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
 authors = [{name = "Landing contributors"}]
 keywords = ["claude-code", "codex", "ai-agents", "quota", "handoff"]
 classifiers = [
   "Development Status :: 3 - Alpha",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
 ]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "tomli>=2; python_version < '3.11'"]
+release = ["build>=1.2", "twine>=5"]
 
 [project.scripts]
 landing = "agent_landing.cli:main"

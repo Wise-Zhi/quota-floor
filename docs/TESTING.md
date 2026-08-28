@@ -13,7 +13,8 @@ pip install -e .
 pytest -q
 ```
 
-Expected current baseline: all repository tests pass (222 at time of writing).
+Expected current baseline: all repository tests pass. The count is intentionally
+not fixed here because regression coverage grows with each release.
 
 Also run:
 
@@ -234,12 +235,14 @@ Do not intentionally burn account quota just to hit a threshold. Prefer a floor 
 
 ## Codex integration test
 
-The Windows integration was last completed on codex-cli `0.150.0-alpha.8` on
-2026-08-28. The control run, with no budget, created a file through
-`apply_patch`. The LAND run used the same write path; Codex reported the
-`PreToolUse` refusal and the file remained absent. Record all three facts when
-repeating the test -- error text alone cannot distinguish a real host denial
-from a model that chose not to write.
+The Windows integration was last completed on codex-cli
+`0.150.0-alpha.12.2` on 2026-08-29. The control run, with no budget, created a
+file through `apply_patch`. The LAND run used the same write path; Codex
+reported the `PreToolUse` refusal and the file remained absent. A final LAND
+run patched only the reserved `AGENT_HANDOFF.md`; the host executed it and
+`PostToolUse` stopped the session. Record all of those facts when repeating the
+test -- error text alone cannot distinguish a real host denial from a model
+that chose not to write.
 
 ### Composer discovery check
 
