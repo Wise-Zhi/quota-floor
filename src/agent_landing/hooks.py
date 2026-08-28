@@ -407,6 +407,27 @@ def suggests_cancel(prompt: str) -> bool:
     return any(phrase in text for phrase in _CANCEL_HINTS)
 
 
+#: A budget request needs both a quota word and a percentage before it counts as
+#: one. Either alone is ordinary conversation -- "70% of the tests pass", "the
+#: quota endpoint is slow" -- and this must not fire on those.
+_BUDGET_WORDS = ("quota", "budget", "配额", "额度")
+_PERCENTAGE = re.compile(r"\d{1,3}\s*(?:%|percent|percentage point)")
+
+
+def suggests_budget(prompt: str) -> bool:
+    """Does this read like a budget request that forgot the marker? Hint only.
+
+    Codex no longer ships a skill, so a plain-language request reaches nothing at
+    all: without this the work simply runs unguarded and silently. A hint cannot
+    open a budget -- the percentage would be a guess, and a guessed floor is not
+    the user's floor -- but it can stop the silence.
+    """
+    text = (prompt or "").casefold()
+    if extract_invocation(prompt) is not None:
+        return False
+    return bool(_PERCENTAGE.search(text)) and any(word in text for word in _BUDGET_WORDS)
+
+
 def cancel_session(session: TaskSession) -> bool:
     """End the contract and stand the guard down. False if already cancelled."""
     if session.is_cancelled:
@@ -532,6 +553,14 @@ def user_prompt(
 
     with store.lock():
         session = store.load_session()
+        if (session is None or session.is_inactive) and not explicit and suggests_budget(prompt):
+            return _prompt_context(
+                "Quota guard: this reads like a request to work under a quota budget, but it "
+                "carried no Landing invocation, so NO budget was opened and this work is "
+                "unguarded. Say that plainly, and give the exact form: `/landing leave 70 "
+                "<task>` on Claude Code, `$landing leave 70 <task>` on Codex. Do not open a "
+                "budget yourself and do not invent a percentage the user did not give."
+            )
         if not session:
             if explicit:
                 return _prompt_context(

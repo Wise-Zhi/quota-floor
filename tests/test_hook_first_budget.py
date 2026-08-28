@@ -187,3 +187,39 @@ def test_prose_never_records_a_refusal(tmp_path):
     store = seed(tmp_path)
     submit(store, "why does /landing cancel not work?")
     assert store.load_refusal() is None
+
+
+def test_a_marker_less_budget_request_is_not_silently_unguarded(tmp_path):
+    """Codex ships no skill now, so plain language reaches nothing at all.
+
+    A hint cannot open the budget -- the percentage would be a guess, and a
+    guessed floor is not the user's floor -- but it can stop the work from
+    running unguarded while the user believes otherwise.
+    """
+    store = seed(tmp_path)
+    context = context_of(submit(store, "leave me 70% quota and refactor auth"))
+
+    assert "NO budget was opened" in context
+    assert "/landing leave 70" in context
+    assert store.load_session() is None, "a hint must never open a budget"
+
+
+def test_the_hint_needs_both_a_quota_word_and_a_percentage(tmp_path):
+    """Either alone is ordinary conversation and must not trigger anything."""
+    store = seed(tmp_path)
+    for prompt in ("70% of the tests pass", "the quota endpoint is slow", "refactor auth"):
+        assert submit(store, prompt) == {}, prompt
+
+
+def test_a_real_invocation_never_gets_the_hint(tmp_path):
+    store = seed(tmp_path)
+    context = context_of(submit(store, "/landing leave 70 refactor auth"))
+    assert "NO budget was opened" not in context
+    assert store.load_session().floor_percent == 70
+
+
+def test_no_hint_while_a_budget_is_already_guarding(tmp_path):
+    """Nothing to warn about once the floor is in force."""
+    store = seed(tmp_path)
+    submit(store, "/landing leave 70 first task")
+    assert submit(store, "now leave me 50% quota instead") == {}
