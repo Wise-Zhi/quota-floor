@@ -118,6 +118,7 @@ class StateStore:
         self.snapshot_path = self.root / "latest_snapshot.json"
         self.history_path = self.root / "snapshots.jsonl"
         self.lock_path = self.root / "session.lock"
+        self.refusal_path = self.root / "last_refusal.json"
 
     def _lock_is_stale(self) -> bool:
         try:
@@ -178,6 +179,37 @@ class StateStore:
             self.lock_path.unlink(missing_ok=True)
         except OSError:
             pass
+
+    #: A refusal is only worth keeping while the user might still be looking for
+    #: it. Older than this and it is more likely to confuse than explain.
+    REFUSAL_TTL_SECONDS = 3600.0
+
+    def save_refusal(self, text: str) -> None:
+        """Remember why an invocation was turned away.
+
+        Codex shows a blocked prompt as the single word "Blocked" and surfaces
+        no `reason`, `stopReason`, `systemMessage`, or hook stderr -- measured on
+        0.150.0-alpha.8. Blocking is still right, because the alternative is
+        letting the turn run and trusting the model not to work unguarded. But a
+        refusal nobody can read is a dead end, so `landing status` can say what
+        happened.
+        """
+        payload = json.dumps({"text": text, "at": time()}, indent=2)
+        _atomic_write(self.refusal_path, payload + "\n")
+
+    def load_refusal(self) -> str | None:
+        if not self.refusal_path.exists():
+            return None
+        try:
+            data = json.loads(self.refusal_path.read_text(encoding="utf-8"))
+            if time() - float(data["at"]) > self.REFUSAL_TTL_SECONDS:
+                return None
+            return str(data["text"])
+        except (ValueError, TypeError, KeyError, OSError):
+            return None
+
+    def clear_refusal(self) -> None:
+        self.refusal_path.unlink(missing_ok=True)
 
     def save_session(self, session: TaskSession) -> None:
         _atomic_write(self.session_path, json.dumps(session.to_dict(), indent=2) + "\n")

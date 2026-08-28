@@ -145,3 +145,45 @@ def test_a_path_that_merely_contains_the_word_is_not_an_invocation():
         "see .claude/skills/landing/SKILL.md",
     ):
         assert extract_invocation(text) is None, text
+
+
+def test_a_blocked_invocation_leaves_a_readable_reason(tmp_path):
+    """Codex renders a blocked prompt as the single word "Blocked".
+
+    Measured on codex-cli 0.150.0-alpha.8: neither `reason`, `stopReason`,
+    `systemMessage`, nor the hook's stderr reaches the user. Blocking is still
+    right -- the alternative is running the turn and trusting the model not to
+    work unguarded -- but a refusal nobody can read is a dead end, so it is kept
+    for `landing status`.
+    """
+    store = seed(tmp_path)
+    assert submit(store, "/landing leave abc do the thing")["decision"] == "block"
+
+    kept = store.load_refusal()
+    assert kept is not None
+    assert "no quota percentage was given" in kept
+
+
+def test_opening_a_budget_clears_the_previous_refusal(tmp_path):
+    """A stale explanation is its own confusion once the budget exists."""
+    store = seed(tmp_path)
+    submit(store, "/landing leave abc do the thing")
+    assert store.load_refusal() is not None
+
+    submit(store, "/landing leave 70 do the thing")
+    assert store.load_refusal() is None
+
+
+def test_a_refused_budget_is_also_kept(tmp_path):
+    """Not only parse errors: the ratchet refusal is just as invisible."""
+    store = seed(tmp_path)
+    submit(store, "/landing leave 70 first task")
+    submit(store, "/landing leave 5 lower the floor")
+    assert "Refusing to lower it" in (store.load_refusal() or "")
+
+
+def test_prose_never_records_a_refusal(tmp_path):
+    """Discussing the command must not leave an error behind for the user."""
+    store = seed(tmp_path)
+    submit(store, "why does /landing cancel not work?")
+    assert store.load_refusal() is None

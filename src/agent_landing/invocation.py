@@ -142,6 +142,13 @@ def _fail(
 def _suggest_from(tokens: list[str]) -> str | None:
     """Offer a correction for a near-miss, as text only -- never auto-applied."""
     for token in tokens:
+        # The letter-for-digit repair is for a mistyped number like `7O`, so it
+        # only applies to a token that is already trying to be one. Without that
+        # guard an ordinary word qualified: `leave abc do the thing` suggested
+        # `leave 0`, because "do" became "d0". A wrong suggestion is worse than
+        # none -- it teaches syntax the guard will refuse.
+        if not any(character.isdigit() for character in token):
+            continue
         digits = re.sub(r"[^\d.]", "", token.replace("O", "0").replace("o", "0"))
         if digits and _FLOOR.match(digits) and 0 <= float(digits) <= 100:
             return f"/landing leave {float(digits):g} <task>"

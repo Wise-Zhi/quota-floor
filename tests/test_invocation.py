@@ -247,3 +247,15 @@ def test_mode_is_never_inferred_from_trailing_text():
     """The safety-critical fields stay explicit regardless of where they appear."""
     for raw in ("fix the tests 70", "fix the tests weekly 70", "do the thing 5h"):
         assert not parse_invocation(raw).ok
+
+
+def test_an_ordinary_word_is_not_read_as_a_mistyped_number():
+    """`leave abc do the thing` used to suggest `leave 0`, because "do" -> "d0".
+
+    The letter-for-digit repair is for a token already trying to be a number. A
+    wrong suggestion is worse than none: it teaches syntax the guard refuses.
+    """
+    assert parse_invocation("leave abc do the thing").suggestion is None
+    assert parse_invocation("leave abc fix the tests").suggestion is None
+    # The repair it exists for still works.
+    assert "leave 70" in parse_invocation("leave 7O fix the tests").suggestion

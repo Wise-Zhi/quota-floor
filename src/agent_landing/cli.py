@@ -330,6 +330,8 @@ def cmd_hook_user_prompt(args: argparse.Namespace) -> int:
             # fresh session nothing has refreshed one yet.
             _refresh_codex_if_needed(store, args.refresh_after_seconds, args.executable)
         result = user_prompt(payload, store, provider=args.platform)
+        if result.get("decision") == "block":
+            print(result.get("reason", ""), file=sys.stderr)
     except Exception as error:  # noqa: BLE001
         # Fail safe: this hook cancels, releases, or opens a budget. Doing
         # nothing leaves the previous state in force, which is never the
@@ -379,6 +381,15 @@ def cmd_status(args: argparse.Namespace) -> int:
                     "message": "Quota budget cancelled; tool use is unrestricted. Start a new budget to be guarded.",
                 }, indent=2))
             return 0
+        # A blocked invocation is invisible on Codex, which renders it as the
+        # single word "Blocked". This is where the user finds out what was wrong.
+        refusal = store.load_refusal()
+        if refusal:
+            if getattr(args, "compact", False):
+                print("AL | last invocation refused | no budget")
+            else:
+                print(refusal)
+            return 1
         print("No active task with a usable quota snapshot.")
         return 1
     session, decision = current

@@ -426,6 +426,16 @@ def _blocked(reason: str) -> dict[str, Any]:
     return {"decision": "block", "reason": reason, "systemMessage": reason}
 
 
+def _refuse(store: StateStore, reason: str) -> dict[str, Any]:
+    """Block the prompt, and leave the reason somewhere the user can still read.
+
+    Codex renders a blocked prompt as the single word "Blocked" and surfaces no
+    reason through any channel, so without this the refusal is a dead end.
+    """
+    store.save_refusal(reason)
+    return _blocked(reason)
+
+
 def _open_budget_from_prompt(
     prompt: str,
     store: StateStore,
@@ -457,17 +467,20 @@ def _open_budget_from_prompt(
         # Mid-message text that does not parse is prose about the command, not a
         # broken invocation -- blocking there would make Landing impossible to
         # discuss. See `extract_invocation`.
-        return _blocked(parsed.message()) if authoritative else None
+        if not authoritative:
+            return None
+        store.save_refusal(parsed.message())
+        return _blocked(parsed.message())
     if parsed.action == "cancel":
         return None  # handled by the cancel path, which owns its own matching
 
     snapshot = store.load_snapshot()
     if snapshot is None or snapshot.provider != provider:
-        return _blocked(
+        return _refuse(store, (
             f"Could not start a quota budget: no {provider} quota reading is available yet, so "
             "there is nothing to budget against. Nothing was started, and the task was not run. "
             "Retry once quota has been read, or run `landing status` to see why it is missing."
-        )
+        ))
     try:
         with store.lock():
             result = start_budget(
@@ -481,7 +494,9 @@ def _open_budget_from_prompt(
                 cwd=payload.get("cwd") or os.getcwd(),
             )
     except BudgetRefused as refusal:
-        return _blocked(f"Could not start a quota budget: {refusal}")
+        return _refuse(store, f"Could not start a quota budget: {refusal}")
+
+    store.clear_refusal()
 
     # The model is told the budget exists and that there is nothing to do about
     # it, so it has no reason to mention the guard before starting the work.
