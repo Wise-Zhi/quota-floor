@@ -11,6 +11,7 @@ import pytest
 
 from agent_landing.cli import build_parser
 from agent_landing.installation import (
+    EVENT_COMMANDS,
     InstallationConflict,
     doctor_host,
     install_host,
@@ -534,3 +535,108 @@ def test_claude_install_warns_that_running_sessions_keep_old_hooks(tmp_path):
         "claude", home=tmp_path, python_executable="python", os_name="posix"
     )
     assert "Restart them" in result["next_action"]
+
+
+def _mark(skill: Path, host: str) -> None:
+    skill.mkdir(parents=True, exist_ok=True)
+    (skill / "SKILL.md").write_text("stale", encoding="utf-8")
+    (skill / ".landing-install.json").write_text(
+        json.dumps({"owner": "agent-landing", "host": host, "format": 1}), encoding="utf-8"
+    )
+
+
+def test_codex_skill_marked_with_another_host_is_still_removed(tmp_path):
+    """Found live on 2026-08-29 in ~/.agents/skills/landing.
+
+    Its marker said `host: claude`, so the exact-match ownership test refused
+    it, and every `landing install` left it in place -- the one directory the
+    removal exists to clean up. The path decides the host; no Claude install
+    writes the Codex slot, so a marker naming the other host there is corrupt
+    data, not a foreign owner.
+    """
+    skill = tmp_path / ".agents" / "skills" / "landing"
+    _mark(skill, "claude")
+
+    install_host("codex", home=tmp_path, python_executable="python", os_name="posix")
+
+    assert not skill.exists()
+
+
+def test_a_skill_another_owner_marked_is_left_alone_on_codex(tmp_path):
+    """Loosening the host must not loosen the owner."""
+    skill = tmp_path / ".agents" / "skills" / "landing"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("not Landing", encoding="utf-8")
+    (skill / ".landing-install.json").write_text(
+        json.dumps({"owner": "someone-else", "host": "codex", "format": 1}), encoding="utf-8"
+    )
+
+    install_host("codex", home=tmp_path, python_executable="python", os_name="posix")
+
+    assert (skill / "SKILL.md").read_text(encoding="utf-8") == "not Landing"
+
+
+def test_doctor_reports_a_stale_codex_skill_whatever_host_it_names(tmp_path):
+    install_host("codex", home=tmp_path, python_executable=sys.executable, os_name=os.name)
+    _mark(tmp_path / ".agents" / "skills" / "landing", "claude")
+
+    result = doctor_host("codex", home=tmp_path, live=False)
+    check = next(c for c in result["checks"] if c["name"] == "no_skill_installed")
+
+    assert result["status"] == "error"
+    assert check["status"] == "error"
+    assert "landing install" in check["detail"]
+
+
+def _inventory(home: Path, *, trusted: bool = True, skill: bool = True) -> dict:
+    """What `hooks/list` and `skills/list` would report for this install.
+
+    Built from the hooks Landing actually wrote, so the fake cannot drift away
+    from the commands the recognizer looks for.
+    """
+    config = _read(home / ".codex" / "hooks.json")
+    hooks = [
+        {
+            "source": "user",
+            "enabled": True,
+            "command": command,
+            "trustStatus": "trusted" if trusted else "untrusted",
+        }
+        for event in EVENT_COMMANDS
+        for command in _commands(config, event)
+    ]
+    skills = [{"name": "landing", "scope": "user", "enabled": True}] if skill else []
+    return {2: {"result": {"hooks": hooks}}, 3: {"result": {"skills": skills}}}
+
+
+def test_doctor_calls_a_landing_skill_loaded_in_codex_an_error(tmp_path, monkeypatch):
+    """The live half of `no_skill_installed`.
+
+    A skill loaded from somewhere Landing does not manage is invisible to the
+    filesystem check, and it brings back the preamble just the same. Reporting
+    it as `ok` -- which it did -- let doctor go fully green on the exact state
+    the Codex skill was deleted to prevent.
+    """
+    import agent_landing.installation as installation
+
+    install_host("codex", home=tmp_path, python_executable=sys.executable, os_name=os.name)
+    monkeypatch.setattr(installation, "_codex_inventory", lambda *a, **k: _inventory(tmp_path))
+
+    result = doctor_host("codex", home=tmp_path, live=True)
+    check = next(c for c in result["checks"] if c["name"] == "codex_skill_absent")
+
+    assert check["status"] == "error"
+    assert result["status"] == "error"
+
+
+def test_doctor_is_green_when_codex_loads_hooks_and_no_skill(tmp_path, monkeypatch):
+    import agent_landing.installation as installation
+
+    install_host("codex", home=tmp_path, python_executable=sys.executable, os_name=os.name)
+    monkeypatch.setattr(installation, "_codex_inventory", lambda *a, **k: _inventory(tmp_path, skill=False))
+
+    result = doctor_host("codex", home=tmp_path, live=True)
+    names = {c["name"]: c["status"] for c in result["checks"]}
+
+    assert names["codex_skill_absent"] == "ok"
+    assert names["codex_hooks_trusted"] == "ok"

@@ -102,8 +102,10 @@ Codex's trust records.
 3. Run `landing doctor --host codex`.
 
 The doctor calls `hooks/list` on the local app-server. A ready installation
-reports all three hooks as loaded from `user` scope, enabled, and trusted. This
-check does not invoke a model.
+reports all three hooks as loaded from `user` scope, enabled, and trusted. It
+also asks for the loaded skills and fails if Codex still offers one named
+`landing`, because a leftover skill brings back the announcement that removing
+it was meant to stop. This check does not invoke a model.
 
 ## Verify both hosts
 

@@ -371,7 +371,7 @@ def _skill_assets_match(
     return True
 
 
-def _is_managed_skill(host: str, skill_path: Path) -> bool:
+def _is_managed_skill(skill_path: Path) -> bool:
     marker_path = skill_path / MARKER
     if not marker_path.is_file():
         return False
@@ -379,12 +379,20 @@ def _is_managed_skill(host: str, skill_path: Path) -> bool:
         marker = json.loads(marker_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return False
-    return marker == {"owner": "agent-landing", "host": host, "format": 1}
+    if not isinstance(marker, dict) or marker.get("format") != 1:
+        return False
+    # Ownership is the owner field, not the host field. The path already decides
+    # the host -- no Claude install ever writes the Codex directory -- so a
+    # marker naming the other host there is corrupt, not foreign. Requiring an
+    # exact host match made removal refuse precisely the older or hand-copied
+    # installs it exists to clean up, and a Codex skill that survives every
+    # `landing install` brings back the preamble the fix removed.
+    return marker.get("owner") == "agent-landing" and set(marker) <= {"owner", "host", "format"}
 
 
-def _remove_managed_skill(host: str, skill_path: Path) -> bool:
+def _remove_managed_skill(skill_path: Path) -> bool:
     """Delete a Landing-owned skill directory. Never touches an unowned one."""
-    if not _is_managed_skill(host, skill_path):
+    if not _is_managed_skill(skill_path):
         return False
     shutil.rmtree(skill_path)
     return True
@@ -396,7 +404,7 @@ def _install_skill(
     source = _asset_root(host)
     if (
         skill_path.exists()
-        and not _is_managed_skill(host, skill_path)
+        and not _is_managed_skill(skill_path)
         and not _skill_assets_match(source, skill_path)
         and not _skill_assets_match(
             source,
@@ -451,7 +459,7 @@ def install_host(
     config = _load_json(config_path)
     platform_name = os_name or os.name
     merged = _merged_config(host, config, python_executable, platform_name)
-    was_installed = _is_managed_skill(host, skill_path) or any(
+    was_installed = _is_managed_skill(skill_path) or any(
         _landing_command(hook.get("command"), platform=host)
         for groups in (config.get("hooks", {}) or {}).values()
         if isinstance(groups, list)
@@ -470,7 +478,7 @@ def install_host(
     else:
         # Upgrading from a version that did ship one must take it away again, or
         # the preamble it causes survives the fix that removed it.
-        _remove_managed_skill(host, skill_path)
+        _remove_managed_skill(skill_path)
     _write_json(config_path, merged)
     return {
         "host": host,
@@ -538,7 +546,7 @@ def uninstall_host(host: str, *, home: str | Path | None = None) -> dict[str, An
     if config_changed:
         _write_json(config_path, merged)
     skill_changed = False
-    if _is_managed_skill(host, skill_path):
+    if _is_managed_skill(skill_path):
         shutil.rmtree(skill_path)
         skill_changed = True
     return {
@@ -647,7 +655,7 @@ def doctor_host(
     config_path, skill_path = _paths(host, home_path)
     checks: list[dict[str, str]] = []
     if host not in SKILL_HOSTS:
-        stale = _is_managed_skill(host, skill_path)
+        stale = _is_managed_skill(skill_path)
         checks.append({
             "name": "no_skill_installed",
             "status": "error" if stale else "ok",
@@ -661,11 +669,11 @@ def doctor_host(
     if host in SKILL_HOSTS:
         checks.append({
             "name": "managed_skill",
-            "status": "ok" if _is_managed_skill(host, skill_path) else "error",
+            "status": "ok" if _is_managed_skill(skill_path) else "error",
             "detail": str(skill_path),
         })
     assets_match = host not in SKILL_HOSTS or (
-        _is_managed_skill(host, skill_path)
+        _is_managed_skill(skill_path)
         and _skill_assets_match(
             _asset_root(host),
             skill_path,
@@ -770,13 +778,20 @@ def doctor_host(
             })
             skills_result = responses[3].get("result", {})
             skill_nodes = [node for node in _walk_dicts(skills_result) if node.get("name") == "landing"]
-            skill_ready = any(
-                node.get("scope") == "user" and node.get("enabled") is True for node in skill_nodes
-            )
+            # Landing ships no Codex skill. One the host still offers is a
+            # leftover, and it is the live half of `no_skill_installed`: the
+            # filesystem check cannot see a skill loaded from somewhere Landing
+            # does not manage, and either one brings the preamble back.
+            skill_loaded = any(node.get("enabled") is True for node in skill_nodes)
             checks.append({
-                "name": "codex_skill_loaded",
-                "status": "ok" if skill_ready else "error",
-                "detail": "landing skill enabled in user scope" if skill_ready else "landing user skill was not discovered",
+                "name": "codex_skill_absent",
+                "status": "error" if skill_loaded else "ok",
+                "detail": (
+                    "a landing skill is still loaded in Codex; remove it, or the model "
+                    "announces Landing before starting work"
+                    if skill_loaded
+                    else "no landing skill is loaded, as intended"
+                ),
             })
     status = "error" if any(check["status"] == "error" for check in checks) else "ok"
     return {"host": host, "status": status, "checks": checks}
