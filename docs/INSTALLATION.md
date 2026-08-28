@@ -34,7 +34,9 @@ and replaces old Landing hook entries instead of adding duplicates.
 
 ### Codex
 
-- Skill: `~/.agents/skills/landing/`
+- Skill: none. Landing installs no Codex skill; the hooks do the work, and being
+  a skill made the model announce Landing before starting any task. An older
+  install's skill is removed on the next `landing install`.
 - Hooks: merged into `~/.codex/hooks.json`
 - Events: `PreToolUse`, `PostToolUse`, and `UserPromptSubmit`
 
@@ -99,10 +101,9 @@ Codex's trust records.
    unrelated plugin hooks can appear in the same review.
 3. Run `landing doctor --host codex`.
 
-The doctor calls `hooks/list` and `skills/list` on the local app-server. A ready
-installation reports all three hooks as loaded from `user` scope, enabled, and
-trusted, and reports the `landing` skill enabled at user scope. This check does
-not invoke a model.
+The doctor calls `hooks/list` on the local app-server. A ready installation
+reports all three hooks as loaded from `user` scope, enabled, and trusted. This
+check does not invoke a model.
 
 ## Verify both hosts
 
@@ -111,7 +112,7 @@ landing doctor
 ```
 
 The command returns non-zero if files are missing or stale, a hook is missing,
-Codex did not discover the user skill, or Codex hooks are not trusted. Use
+or Codex hooks are not trusted. Use
 `--no-live` only when Codex is unavailable and a filesystem-only check is
 intentional.
 
@@ -138,9 +139,8 @@ None of these three ever fail the command. A missing quota reading is a fact
 about the host, not a broken installation.
 
 After doctor passes, open any other repository. Claude Code should offer
-`/landing`; Codex should show **Agent Landing** when selecting `$landing`. Codex
-does not keep its autocomplete candidate visible after an unselected Space;
-that composer behavior is independent of installation and hook trust.
+`/landing` in its slash-command list. Codex has no entry to offer, by design:
+type the invocation as text and the hook picks it up.
 
 ## Update
 

@@ -66,15 +66,32 @@ def test_codex_install_is_global_portable_and_preserves_unrelated_hooks(tmp_path
         assert "C:/Python/python.exe" in landing[0]
     # No codex path is baked in; see the trust-stability test below for why.
     assert not any("Codex" in command for command in _commands(config, "PreToolUse"))
-    assert (tmp_path / ".agents" / "skills" / "landing" / "SKILL.md").is_file()
-    assert (tmp_path / ".agents" / "skills" / "landing" / "agents" / "openai.yaml").is_file()
-    assert (tmp_path / ".agents" / "skills" / "landing" / ".landing-install.json").is_file()
-    installed_skill = (tmp_path / ".agents" / "skills" / "landing" / "SKILL.md").read_text(
-        encoding="utf-8"
+    # Codex gets no skill. Being one made the model announce Landing before any
+    # work began, and the hooks open the budget without it.
+    assert not (tmp_path / ".agents" / "skills" / "landing").exists()
+    assert result["skill"] is None
+
+
+def test_installing_codex_takes_away_a_skill_an_older_version_left(tmp_path):
+    """The preamble survives the fix if the skill that causes it survives."""
+    skill = tmp_path / ".agents" / "skills" / "landing"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("stale", encoding="utf-8")
+    (skill / ".landing-install.json").write_text(
+        json.dumps({"owner": "agent-landing", "host": "codex", "format": 1}), encoding="utf-8"
     )
-    assert '"C:/Python/python.exe" -m agent_landing.cli invoke' in installed_skill
-    assert "```powershell" in installed_skill
-    assert "\nlanding invoke" not in installed_skill
+
+    install_host("codex", home=tmp_path, python_executable="python", os_name="posix")
+    assert not skill.exists()
+
+
+def test_a_skill_landing_does_not_own_is_left_alone_on_codex(tmp_path):
+    skill = tmp_path / ".agents" / "skills" / "landing"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("not Landing", encoding="utf-8")
+
+    install_host("codex", home=tmp_path, python_executable="python", os_name="posix")
+    assert (skill / "SKILL.md").read_text(encoding="utf-8") == "not Landing"
 
 
 def test_codex_reinstall_replaces_old_landing_entries_without_duplicates(tmp_path):
@@ -190,6 +207,34 @@ def test_the_code_fence_is_converted_whatever_the_assets_line_endings(tmp_path):
         ).decode("utf-8")
         assert "```powershell" in rendered, repr(newline)
         assert "```bash" not in rendered, repr(newline)
+
+
+def test_the_runtime_prefix_stays_out_of_prose(tmp_path):
+    """The prefix makes a runnable command correct; it makes a sentence unreadable.
+
+    It also used to apply unevenly -- a prose mention that wrapped onto the next
+    line was skipped -- so one clause named an absolute interpreter path and the
+    next said plain `landing`, in the same sentence.
+    """
+    from agent_landing.installation import _render_skill_asset
+
+    asset = chr(10).join([
+        "do not run `landing invoke` or `landing",
+        "start` yourself.",
+        "",
+        "```bash",
+        'landing invoke "$ARGUMENTS" --provider claude',
+        "```",
+        "",
+    ])
+    rendered = _render_skill_asset(
+        asset.encode("utf-8"), host="claude", python_executable="/opt/py", os_name="posix"
+    ).decode("utf-8")
+
+    prose, fence = rendered.split("```bash", 1)
+    assert "`landing invoke`" in prose, "prose must keep the short name"
+    assert "/opt/py" not in prose
+    assert "/opt/py -m agent_landing.cli invoke" in fence, "the runnable command must be exact"
 
 
 def _record_reading(home: Path, provider: str, age_seconds: float) -> None:
@@ -308,40 +353,40 @@ def test_uninstall_does_not_delete_unowned_skill_directory(tmp_path):
 
 
 def test_fake_ownership_marker_neither_allows_overwrite_nor_deletion(tmp_path):
-    skill = tmp_path / ".agents" / "skills" / "landing"
+    skill = tmp_path / ".claude" / "skills" / "landing"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text("mine", encoding="utf-8")
     (skill / ".landing-install.json").write_text(
-        json.dumps({"owner": "someone-else", "host": "codex", "format": 1}),
+        json.dumps({"owner": "someone-else", "host": "claude", "format": 1}),
         encoding="utf-8",
     )
 
     with pytest.raises(InstallationConflict, match="not owned"):
-        install_host("codex", home=tmp_path, python_executable="python", os_name="posix")
-    result = uninstall_host("codex", home=tmp_path)
+        install_host("claude", home=tmp_path, python_executable="python", os_name="posix")
+    result = uninstall_host("claude", home=tmp_path)
 
     assert result["status"] == "not_installed"
     assert (skill / "SKILL.md").read_text(encoding="utf-8") == "mine"
 
 
 def test_manual_skill_with_extra_files_is_not_adopted(tmp_path):
-    source = Path(__file__).parents[1] / "src" / "agent_landing" / "assets" / "codex" / "landing"
-    skill = tmp_path / ".agents" / "skills" / "landing"
+    source = Path(__file__).parents[1] / "src" / "agent_landing" / "assets" / "claude" / "landing"
+    skill = tmp_path / ".claude" / "skills" / "landing"
     skill.parent.mkdir(parents=True)
     shutil.copytree(source, skill)
     (skill / "extra.txt").write_text("not Landing", encoding="utf-8")
 
     with pytest.raises(InstallationConflict, match="not owned"):
-        install_host("codex", home=tmp_path, python_executable="python", os_name="posix")
+        install_host("claude", home=tmp_path, python_executable="python", os_name="posix")
 
 
 def test_install_adopts_an_identical_manual_skill_copy(tmp_path):
-    source = Path(__file__).parents[1] / "src" / "agent_landing" / "assets" / "codex" / "landing"
-    skill = tmp_path / ".agents" / "skills" / "landing"
+    source = Path(__file__).parents[1] / "src" / "agent_landing" / "assets" / "claude" / "landing"
+    skill = tmp_path / ".claude" / "skills" / "landing"
     skill.parent.mkdir(parents=True)
     shutil.copytree(source, skill)
 
-    result = install_host("codex", home=tmp_path, python_executable="python", os_name="posix")
+    result = install_host("claude", home=tmp_path, python_executable="python", os_name="posix")
 
     assert result["status"] == "installed"
     assert (skill / ".landing-install.json").is_file()
@@ -405,14 +450,6 @@ def test_cli_install_doctor_and_uninstall_use_the_requested_home(tmp_path, capsy
 def test_packaged_skills_match_the_repository_host_skills():
     root = Path(__file__).parents[1]
     pairs = [
-        (
-            root / ".agents" / "skills" / "landing" / "SKILL.md",
-            root / "src" / "agent_landing" / "assets" / "codex" / "landing" / "SKILL.md",
-        ),
-        (
-            root / ".agents" / "skills" / "landing" / "agents" / "openai.yaml",
-            root / "src" / "agent_landing" / "assets" / "codex" / "landing" / "agents" / "openai.yaml",
-        ),
         (
             root / ".claude" / "skills" / "landing" / "SKILL.md",
             root / "src" / "agent_landing" / "assets" / "claude" / "landing" / "SKILL.md",

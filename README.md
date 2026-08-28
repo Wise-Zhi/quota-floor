@@ -51,14 +51,9 @@ Claude Code shows the expected format directly in slash-command autocomplete:
 /landing (leave|spend) [weekly|5h] <percent> <task>
 ```
 
-Codex's composer works differently. The **Agent Landing** row is an
-autocomplete candidate, not a persistent argument hint. Verified on Codex
-`0.149.0-alpha.4.3`: pressing Space while that row is visible dismisses it
-without selecting the skill. Select the row first; Codex can then apply the
-configured editable starter, `Use $landing leave 75 <task>`. The current
-`skills/list` interface exposes `shortDescription` and `defaultPrompt`, but no
-persistent `argumentHint`, so Landing cannot keep the candidate row visible
-after Space.
+Codex has no such autocomplete, because Landing installs no Codex skill -- see
+below for why. Type the invocation as ordinary text; the hook reads the whole
+message, so task words on either side of it are kept.
 
 - `leave 70` stops while at least 70% **remains**; `spend 15` spends at most 15
   percentage points. One of the two keywords is **required**: a bare number is
@@ -73,12 +68,12 @@ after Space.
   keyword plus a number), so a number or the word `leave` occurring inside the
   task text is never mistaken for settings.
 
-For example: `/landing leave 75 fix the checkout tests`. In Codex, select
-**Agent Landing** before typing arguments; its editable starter is
-`Use $landing leave 75 <task>`.
+For example: `/landing leave 75 fix the checkout tests`.
 
-Invocations are parsed by `landing invoke`, not by the model, so both hosts agree
-and a typo is refused instead of silently starting an unguarded task.
+Invocations are parsed in code, not by the model, so both hosts agree and a typo
+is refused instead of silently starting an unguarded task. On both hosts the
+`UserPromptSubmit` hook does the parsing and opens the budget before the model is
+given the turn.
 
 Users interact with it in three places:
 
@@ -119,7 +114,27 @@ landing start \
   --task "Refactor the authentication layer"
 ```
 
-The intended AI UX is explicit and short: use `/landing` in Claude Code or `$landing` in Codex. For example: `/landing leave 70 -- implement OAuth refresh`. The skill translates that into the provider-neutral budget command before implementation.
+The intended AI UX is explicit and short: use `/landing` in Claude Code or `$landing` in Codex.
+
+### Codex gets no skill, on purpose
+
+The `UserPromptSubmit` hook parses the invocation and opens the budget before the
+model is given the turn, so nothing about a budget needs the model's cooperation.
+Landing therefore installs **no Codex skill**. An invocation is simply text in the
+message, which the hook reads.
+
+That is not a limitation, it is the fix. Codex names the skills it has loaded at
+the start of a turn, so merely *being* a skill made every budgeted task open with
+`I'm using the requested Landing workflow …` instead of the work. Measured on
+2026-08-28, same task and prompt run twice with only the skill's presence
+differing: with the skill, Landing led the first sentence; without it, Landing did
+not appear in the transcript at all, while the budget still opened and the task
+still completed. No wording inside a skill can stop a model from mentioning that
+the skill exists.
+
+The cost is discoverability: Codex cannot autocomplete a skill that is not there.
+Claude Code keeps its skill, because its slash command is how `/landing` is
+offered in the first place.
 
 ## States
 
@@ -288,7 +303,7 @@ each repository:
 
 | Host | Persistent skill | Persistent configuration |
 | --- | --- | --- |
-| Codex | `~/.agents/skills/landing/` | `~/.codex/hooks.json` |
+| Codex | none, by design (see below) | `~/.codex/hooks.json` |
 | Claude Code | `~/.claude/skills/landing/` | `~/.claude/settings.json` |
 
 The merge preserves unrelated settings and hooks. It refuses to overwrite invalid

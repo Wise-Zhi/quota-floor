@@ -1,6 +1,0 @@
-interface:
-  display_name: "Agent Landing"
-  short_description: "Syntax: (leave|spend) [weekly|5h] <percent> <task>"
-  default_prompt: "Use $landing leave 75 <task>"
-policy:
-  allow_implicit_invocation: false

@@ -163,9 +163,7 @@ def test_every_example_in_the_docs_actually_parses():
     # are asserted present rather than tolerated.
     roots = [
         Path("src/agent_landing/assets/claude/landing/SKILL.md"),
-        Path("src/agent_landing/assets/codex/landing/SKILL.md"),
         Path(".claude/skills/landing/SKILL.md"),
-        Path(".agents/skills/landing/SKILL.md"),
         Path("README.md"),
     ]
     for path in roots:

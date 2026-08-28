@@ -28,6 +28,20 @@ EVENT_COMMANDS = {
 }
 MARKER = ".landing-install.json"
 
+#: Hosts where Landing ships a skill. Codex is deliberately absent.
+#:
+#: Codex announces the skills it has loaded at the start of a turn, so merely
+#: *being* a skill produced "I'm using the requested Landing workflow" before any
+#: work began. Measured on 2026-08-28 with the same task and prompt run twice,
+#: the only difference being whether the skill was installed: with it, Landing
+#: led the sentence; without it, Landing was absent from the transcript entirely
+#: while the budget still opened and the task still completed.
+#:
+#: No wording inside a skill can stop a model from mentioning that the skill
+#: exists. The `UserPromptSubmit` hook opens the budget either way, so on Codex
+#: the skill bought nothing but the preamble it was supposed to prevent.
+SKILL_HOSTS = ("claude",)
+
 #: A quota reading older than this is no longer evidence that the path still works.
 QUOTA_SOURCE_STALE_SECONDS = 24 * 3600
 
@@ -263,11 +277,22 @@ def _render_skill_asset(
         # normalized the way tracked files are.
         text = re.sub(r"```bash(\r?\n)(?=landing invoke)", r"```powershell\1", text)
     prefix = _skill_runtime_prefix(host, python_executable, os_name)
-    return re.sub(
-        r"(?<![/\$])\blanding (?=(?:invoke|start|complete|cancel|\*))",
-        lambda _match: f"{prefix} ",
-        text,
-    ).encode("utf-8")
+    pattern = re.compile(r"(?<![/\$])\blanding (?=(?:invoke|start|complete|cancel|\*))")
+
+    # Substitute only inside fenced code blocks. The prefix exists so the command
+    # the model *runs* is correct; splicing an absolute interpreter path into the
+    # middle of a sentence reads terribly, and it applied unevenly -- a prose
+    # mention wrapped onto the next line was skipped, so one clause named the
+    # full path and the next said plain `landing`, in the same sentence.
+    rendered: list[str] = []
+    in_fence = False
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+            rendered.append(line)
+            continue
+        rendered.append(pattern.sub(prefix + " ", line) if in_fence else line)
+    return "".join(rendered).encode("utf-8")
 
 
 def _copy_assets(
@@ -357,6 +382,14 @@ def _is_managed_skill(host: str, skill_path: Path) -> bool:
     return marker == {"owner": "agent-landing", "host": host, "format": 1}
 
 
+def _remove_managed_skill(host: str, skill_path: Path) -> bool:
+    """Delete a Landing-owned skill directory. Never touches an unowned one."""
+    if not _is_managed_skill(host, skill_path):
+        return False
+    shutil.rmtree(skill_path)
+    return True
+
+
 def _install_skill(
     host: str, skill_path: Path, *, python_executable: str, os_name: str
 ) -> None:
@@ -427,17 +460,22 @@ def install_host(
         for hook in group.get("hooks", [])
         if isinstance(hook, dict)
     )
-    _install_skill(
-        host,
-        skill_path,
-        python_executable=python_executable,
-        os_name=platform_name,
-    )
+    if host in SKILL_HOSTS:
+        _install_skill(
+            host,
+            skill_path,
+            python_executable=python_executable,
+            os_name=platform_name,
+        )
+    else:
+        # Upgrading from a version that did ship one must take it away again, or
+        # the preamble it causes survives the fix that removed it.
+        _remove_managed_skill(host, skill_path)
     _write_json(config_path, merged)
     return {
         "host": host,
         "status": "updated" if was_installed else "installed",
-        "skill": str(skill_path),
+        "skill": str(skill_path) if host in SKILL_HOSTS else None,
         "config": str(config_path),
         "next_action": (
             "Open Codex, review and trust the three Landing hooks, then run landing doctor. "
@@ -599,31 +637,48 @@ def doctor_host(
     root = Path(state_root) if state_root is not None else resolve_state_root()
     config_path, skill_path = _paths(host, home_path)
     checks: list[dict[str, str]] = []
-    checks.append({
-        "name": "managed_skill",
-        "status": "ok" if _is_managed_skill(host, skill_path) else "error",
-        "detail": str(skill_path),
-    })
-    assets_match = _is_managed_skill(host, skill_path) and _skill_assets_match(
-        _asset_root(host),
-        skill_path,
-        host=host,
-        python_executable=sys.executable,
-        os_name=os.name,
+    if host not in SKILL_HOSTS:
+        stale = _is_managed_skill(host, skill_path)
+        checks.append({
+            "name": "no_skill_installed",
+            "status": "error" if stale else "ok",
+            "detail": (
+                f"a Landing skill is still installed at {skill_path}; rerun `landing install` "
+                "to remove it. While it is there the model announces Landing before starting work."
+                if stale
+                else "Landing ships no skill for this host; the hooks do the work"
+            ),
+        })
+    if host in SKILL_HOSTS:
+        checks.append({
+            "name": "managed_skill",
+            "status": "ok" if _is_managed_skill(host, skill_path) else "error",
+            "detail": str(skill_path),
+        })
+    assets_match = host not in SKILL_HOSTS or (
+        _is_managed_skill(host, skill_path)
+        and _skill_assets_match(
+            _asset_root(host),
+            skill_path,
+            host=host,
+            python_executable=sys.executable,
+            os_name=os.name,
+        )
     )
-    checks.append({
-        "name": "skill_content",
-        "status": "ok" if assets_match else "error",
-        # Name the fix. The installed skill is a *rendered* copy, so upgrading the
-        # package leaves it behind, and a stale copy can silently lose plain
-        # language triggering while the hooks keep enforcing -- the user then
-        # believes a phrase like "leave me 70%" armed a budget when it did not.
-        "detail": (
-            "packaged skill is current" if assets_match
-            else f"installed skill is stale or missing; re-run `landing install --host {host}` "
-                 "(a package upgrade does not refresh it)"
-        ),
-    })
+    if host in SKILL_HOSTS:
+            checks.append({
+            "name": "skill_content",
+            "status": "ok" if assets_match else "error",
+            # Name the fix. The installed skill is a *rendered* copy, so upgrading the
+            # package leaves it behind, and a stale copy can silently lose plain
+            # language triggering while the hooks keep enforcing -- the user then
+            # believes a phrase like "leave me 70%" armed a budget when it did not.
+            "detail": (
+                "packaged skill is current" if assets_match
+                else f"installed skill is stale or missing; re-run `landing install --host {host}` "
+                     "(a package upgrade does not refresh it)"
+            ),
+        })
     try:
         config = _load_json(config_path)
     except InstallationConflict as error:
