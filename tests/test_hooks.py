@@ -33,6 +33,104 @@ def test_land_blocks_new_write_but_allows_handoff(tmp_path):
     assert allowed.get("hookSpecificOutput", {}).get("permissionDecision") != "deny"
 
 
+def test_land_allows_codex_apply_patch_for_only_the_handoff(tmp_path):
+    """Codex exposes freeform apply_patch input as tool_input.command."""
+    store = setup_store(tmp_path, 73.5)
+    payload = {
+        "tool_name": "apply_patch",
+        "tool_input": {
+            "command": (
+                "*** Begin Patch\n"
+                "*** Add File: AGENT_HANDOFF.md\n"
+                "+# Agent Handoff\n"
+                "*** End Patch"
+            )
+        },
+    }
+
+    allowed = pre_tool(payload, store)
+
+    assert allowed.get("hookSpecificOutput", {}).get("permissionDecision") != "deny"
+
+
+def test_codex_apply_patch_handoff_stops_after_the_file_exists(tmp_path):
+    store = setup_store(tmp_path, 73.5)
+    payload = {
+        "tool_name": "apply_patch",
+        "tool_input": {
+            "command": (
+                "*** Begin Patch\n"
+                "*** Add File: AGENT_HANDOFF.md\n"
+                "+# Agent Handoff\n"
+                "*** End Patch"
+            )
+        },
+        "tool_response": {"success": True},
+    }
+    pre_tool(payload, store)
+    (tmp_path / "AGENT_HANDOFF.md").write_text("# Agent Handoff\n", encoding="utf-8")
+
+    result = post_tool(payload, store)
+
+    assert store.load_session().state == LandingState.STOPPED
+    assert "AGENT_HANDOFF.md" in result["hookSpecificOutput"]["additionalContext"]
+
+
+def test_land_denies_apply_patch_that_bundles_handoff_with_other_work(tmp_path):
+    store = setup_store(tmp_path, 73.5)
+    payload = {
+        "tool_name": "apply_patch",
+        "tool_input": {
+            "command": (
+                "*** Begin Patch\n"
+                "*** Add File: AGENT_HANDOFF.md\n"
+                "+# Agent Handoff\n"
+                "*** Add File: src/sneak.py\n"
+                "+print('still working')\n"
+                "*** End Patch"
+            )
+        },
+    }
+
+    blocked = pre_tool(payload, store)
+
+    assert blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_land_denies_deleting_or_moving_the_handoff(tmp_path):
+    store = setup_store(tmp_path, 73.5)
+    patches = (
+        "*** Begin Patch\n*** Delete File: AGENT_HANDOFF.md\n*** End Patch",
+        (
+            "*** Begin Patch\n"
+            "*** Update File: AGENT_HANDOFF.md\n"
+            "*** Move to: elsewhere.md\n"
+            "@@\n-old\n+new\n"
+            "*** End Patch"
+        ),
+    )
+
+    for command in patches:
+        blocked = pre_tool(
+            {"tool_name": "apply_patch", "tool_input": {"command": command}}, store
+        )
+        assert blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_land_denies_same_handoff_basename_outside_reserved_path(tmp_path):
+    store = setup_store(tmp_path, 73.5)
+
+    blocked = pre_tool(
+        {
+            "tool_name": "Write",
+            "tool_input": {"file_path": "other/AGENT_HANDOFF.md"},
+        },
+        store,
+    )
+
+    assert blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
 def test_post_handoff_stops_session(tmp_path):
     store = setup_store(tmp_path, 73.5)
     pre_tool({"tool_name": "Write", "tool_input": {"file_path": "src/new.py"}}, store)

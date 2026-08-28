@@ -38,13 +38,51 @@ def _candidate_path(tool_input: dict[str, Any]) -> str:
     return ""
 
 
+_PATCH_FILE_HEADER = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$", re.MULTILINE)
+_PATCH_MOVE_HEADER = re.compile(r"^\*\*\* Move to: (.+)$", re.MULTILINE)
+
+
+def _same_handoff_path(path: str, session: TaskSession) -> bool:
+    candidate = Path(path)
+    expected = Path(session.handoff_path)
+    if not candidate.is_absolute():
+        candidate = Path(session.cwd) / candidate
+    if not expected.is_absolute():
+        expected = Path(session.cwd) / expected
+    return os.path.normcase(os.path.abspath(candidate)) == os.path.normcase(
+        os.path.abspath(expected)
+    )
+
+
+def _apply_patch_only_writes_handoff(command: str, session: TaskSession) -> bool:
+    """Accept a Codex freeform patch only when every operation writes the handoff.
+
+    Codex exposes apply_patch to hooks as ``tool_input.command`` rather than a
+    structured file path. Parse the patch envelope instead of letting the
+    missing path turn the one reserved write into a denial. Deleting or moving
+    the handoff is not landing, and bundling another file into the same patch
+    must not bypass the LAND gate.
+    """
+    operations = _PATCH_FILE_HEADER.findall(command)
+    if not operations or _PATCH_MOVE_HEADER.search(command):
+        return False
+    return all(
+        action in {"Add", "Update"} and _same_handoff_path(path.strip(), session)
+        for action, path in operations
+    )
+
+
 def is_handoff_write(payload: dict[str, Any], session: TaskSession) -> bool:
     if _tool_name(payload) not in WRITE_TOOLS:
         return False
-    path = _candidate_path(_tool_input(payload))
+    tool_input = _tool_input(payload)
+    if _tool_name(payload) == "apply_patch":
+        command = tool_input.get("command")
+        return isinstance(command, str) and _apply_patch_only_writes_handoff(command, session)
+    path = _candidate_path(tool_input)
     if not path:
         return False
-    return Path(path).name == Path(session.handoff_path).name
+    return _same_handoff_path(path, session)
 
 
 def _tool_failed(payload: dict[str, Any]) -> bool:
