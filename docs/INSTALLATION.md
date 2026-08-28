@@ -151,7 +151,19 @@ landing install
 landing doctor
 ```
 
-Codex hashes hook files, so a changed file may require trust review again.
+**An update disarms the guard until you re-trust it.** Codex binds hook trust to
+the hook file's hash, so rewriting that file -- which every `landing install`
+does -- reverts all three hooks to untrusted, and untrusted hooks never run.
+Between the update and the trust review, nothing is enforcing. `landing install`
+says so instead of reporting "ready", and `landing doctor --host codex` reports
+it as `codex_hooks_trusted: not trusted`.
+
+Observed on 2026-08-28: after a reinstall, a budget sat in `LAND` while Codex
+edited source files and ran shell commands unchallenged, because the hooks were
+inert. Nothing in the file contents had changed -- only the hash.
+
+Claude Code has no trust step, but a session loads its hooks at start, so
+already-running sessions keep the previous ones until restarted.
 
 ## Uninstall
 

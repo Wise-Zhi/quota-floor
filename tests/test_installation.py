@@ -432,7 +432,10 @@ def test_cli_install_doctor_and_uninstall_use_the_requested_home(tmp_path, capsy
     assert install_args.func(install_args) == 0
     installed = json.loads(capsys.readouterr().out)
     assert installed["results"][0]["status"] == "installed"
-    assert installed["message"].startswith("Landing is ready.")
+    # Never an unqualified "ready": on Codex the hooks are untrusted until
+    # reviewed, and untrusted hooks do not run.
+    assert installed["message"].startswith("Installed, but NOT ENFORCING YET:")
+    assert "Restart them" in installed["message"], "this run installs claude only"
 
     doctor_args = parser.parse_args(
         ["doctor", "--host", "claude", "--home", str(tmp_path), "--no-live"]
@@ -505,3 +508,29 @@ def test_install_does_not_offer_a_flag_it_would_ignore():
     # It remains on `doctor`, which genuinely probes the live binary.
     args = build_parser().parse_args(["doctor", "--codex-executable", "C:/Codex/codex.exe"])
     assert args.codex_executable == "C:/Codex/codex.exe"
+
+
+def test_install_never_reports_ready_while_the_guard_is_disarmed(tmp_path, capsys):
+    """Writing the files is not the same as arming them.
+
+    Codex binds hook trust to the hook file's hash, so every install -- an
+    *update* included -- leaves the hooks untrusted, and untrusted hooks never
+    run. Observed live on 2026-08-28: after reinstalling, a budget sat in LAND
+    while Codex edited source and ran shell commands unchallenged, because the
+    hooks were inert. An installer that says "ready" there manufactures the
+    silently-unguarded state the guard exists to prevent.
+    """
+    args = build_parser().parse_args(["install", "--host", "codex", "--home", str(tmp_path)])
+    assert args.func(args) == 0
+    message = json.loads(capsys.readouterr().out)["message"]
+
+    assert "NOT ENFORCING YET" in message
+    assert "Landing is ready" not in message
+    assert "codex_hooks_trusted" in message, "name the check that confirms it"
+
+
+def test_claude_install_warns_that_running_sessions_keep_old_hooks(tmp_path):
+    result = install_host(
+        "claude", home=tmp_path, python_executable="python", os_name="posix"
+    )
+    assert "Restart them" in result["next_action"]

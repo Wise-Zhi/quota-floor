@@ -134,9 +134,20 @@ def _run_install_command(args: argparse.Namespace, action: str) -> int:
         results.append(result)
     payload = {"command": action, "results": results}
     if action == "install" and not failed:
+        # Never announce readiness on its own. Writing the files is not the same
+        # as arming them: Codex binds hook trust to the file's hash, so an
+        # install -- including an *update* -- leaves every hook untrusted, and
+        # untrusted hooks never run. Reporting "ready" there is the installer
+        # producing the silently-unguarded state the guard exists to prevent.
+        pending = [
+            f"  {result['host']}: {result['next_action']}"
+            for result in results
+            if result.get("next_action")
+        ]
         payload["message"] = (
-            "Landing is ready.\n"
-            "Use it where you already work:\n"
+            ("Installed, but NOT ENFORCING YET:\n" + "\n".join(pending) + "\n\n"
+             if pending else "Landing is ready.\n")
+            + "Use it where you already work:\n"
             "  Claude Code:  /landing leave 70 [task]\n"
             "  Codex:        $landing leave 70 [task]\n"
             "  Quick check:  landing status --compact\n"

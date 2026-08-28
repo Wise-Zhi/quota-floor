@@ -477,11 +477,20 @@ def install_host(
         "status": "updated" if was_installed else "installed",
         "skill": str(skill_path) if host in SKILL_HOSTS else None,
         "config": str(config_path),
+        # Say plainly that the guard is OFF until this is done. Writing the files
+        # is not the same as arming them: Codex binds hook trust to the file's
+        # hash, so every install -- including an *update* -- reverts the hooks to
+        # untrusted, and untrusted hooks are inert. A host that reports "ready"
+        # while nothing is enforcing is the silently-unguarded failure this
+        # project ranks worst, produced by the installer itself.
         "next_action": (
-            "Open Codex, review and trust the three Landing hooks, then run landing doctor. "
+            "NOT ENFORCING YET. Rewriting the hook file reset Codex's hook trust, and "
+            "untrusted hooks never run. Open Codex, review and trust the three Landing "
+            "hooks, then run `landing doctor --host codex` and check `codex_hooks_trusted`. "
             "Use 'Trust all' only if every pending hook is expected."
             if host == "codex"
-            else None
+            else "Already-running Claude Code sessions keep the hooks they loaded at start. "
+                 "Restart them before relying on the guard in those sessions."
         ),
     }
 
