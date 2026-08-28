@@ -91,8 +91,8 @@ The installer prints this once after setup:
 ```text
 Landing is ready.
 Use it where you already work:
-  Claude Code:  /landing leave 70 <task>
-  Codex:        $landing leave 70 <task>
+  Claude Code:  /landing leave 70 [task]
+  Codex:        $landing leave 70 [task]
   Quick check:  landing status --compact
   Full status:  landing status
 ```

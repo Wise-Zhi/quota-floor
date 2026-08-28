@@ -137,8 +137,8 @@ def _run_install_command(args: argparse.Namespace, action: str) -> int:
         payload["message"] = (
             "Landing is ready.\n"
             "Use it where you already work:\n"
-            "  Claude Code:  /landing leave 70 <task>\n"
-            "  Codex:        $landing leave 70 <task>\n"
+            "  Claude Code:  /landing leave 70 [task]\n"
+            "  Codex:        $landing leave 70 [task]\n"
             "  Quick check:  landing status --compact\n"
             "  Full status:  landing status"
         )

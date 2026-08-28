@@ -563,7 +563,7 @@ def user_prompt(
                 "Quota guard: this reads like a request to work under a quota budget, but it "
                 "carried no Landing invocation, so NO budget was opened and this work is "
                 "unguarded. Say that plainly, and give the exact form: `/landing leave 70 "
-                "<task>` on Claude Code, `$landing leave 70 <task>` on Codex. Do not open a "
+                "<task>` on Claude Code, `$landing leave 70 [task]` on Codex. Do not open a "
                 "budget yourself and do not invent a percentage the user did not give."
             )
         if not session:
