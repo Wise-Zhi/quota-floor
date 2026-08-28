@@ -368,6 +368,16 @@ def cmd_status(args: argparse.Namespace) -> int:
         # A cancelled session is deliberately invisible to the gate, but the user
         # asking for status deserves to be told the guard is standing down rather
         # than that nothing exists.
+        # A blocked invocation is invisible on Codex, which renders it as the
+        # single word "Blocked". Report it before anything older: the user is
+        # asking because of the prompt that was just turned away.
+        refusal = store.load_refusal()
+        if refusal:
+            if getattr(args, "compact", False):
+                print("AL | last invocation refused | no budget")
+            else:
+                print(refusal)
+            return 1
         session = store.load_session()
         if session and session.is_cancelled:
             if getattr(args, "compact", False):
@@ -381,15 +391,6 @@ def cmd_status(args: argparse.Namespace) -> int:
                     "message": "Quota budget cancelled; tool use is unrestricted. Start a new budget to be guarded.",
                 }, indent=2))
             return 0
-        # A blocked invocation is invisible on Codex, which renders it as the
-        # single word "Blocked". This is where the user finds out what was wrong.
-        refusal = store.load_refusal()
-        if refusal:
-            if getattr(args, "compact", False):
-                print("AL | last invocation refused | no budget")
-            else:
-                print(refusal)
-            return 1
         print("No active task with a usable quota snapshot.")
         return 1
     session, decision = current

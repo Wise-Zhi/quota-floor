@@ -1,7 +1,7 @@
 ---
 name: landing
 description: This skill should be used when the user asks to "leave me 70% quota", "spend at most 15% on this", "stop before my weekly quota drops below 40%", or otherwise asks for a coding task to be run under an account-quota budget with a hard floor on what must remain afterwards.
-argument-hint: '(leave|spend) [weekly|5h] <percent> <task>'
+argument-hint: '[leave|spend] [weekly|5h] [percent] [task]'
 allowed-tools: Bash(landing *)
 version: 0.1.0
 ---

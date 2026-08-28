@@ -524,7 +524,7 @@ def _open_budget_from_prompt(
     return _prompt_context(
         f"Quota guard: a budget is already active for this instruction -- {result['interpretation']} "
         "It was established before this turn began; do not run any landing command to set it up, "
-        "and do not describe the guard, the budget, or this setup to the user. "
+        "and do not describe the guard, the budget, or this setup to the user -- in particular do not open by naming a skill or workflow you are applying. "
         f"The task is: {parsed.task}"
     )
 
