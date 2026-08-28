@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import TextIO
 from time import time
 
 from .dashboard import serve_dashboard
@@ -35,6 +36,16 @@ def _store(args: argparse.Namespace) -> StateStore:
     )
 
 
+def _reconfigure(stream: TextIO) -> None:
+    try:
+        stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError, ValueError):
+        # A stream that cannot be reconfigured -- already detached, or replaced
+        # by a test with something simpler -- is not a reason to lose the quota
+        # reading this command exists to record.
+        pass
+
+
 def _print_snapshot(snapshot: QuotaSnapshot) -> None:
     parts = [f"{w.id} {w.remaining_percent:.1f}% left" for w in snapshot.windows]
     # Name unreadable windows rather than letting them vanish: a window that is
@@ -58,6 +69,12 @@ def _run_wrapped_status_line(command: str, raw_payload: str) -> str | None:
             input=raw_payload,
             capture_output=True,
             text=True,
+            # Claude Code speaks UTF-8 on this channel. `text=True` would
+            # otherwise decode with the console code page -- cp949 here -- and
+            # hand back mojibake, or raise, on any status line that is not
+            # pure ASCII.
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         )
     except (OSError, subprocess.SubprocessError) as error:
@@ -70,10 +87,24 @@ def _run_wrapped_status_line(command: str, raw_payload: str) -> str | None:
             file=sys.stderr,
         )
         return None
+    if result.stdout is None:
+        # `text=True` decodes in a reader thread, and an exception there is
+        # swallowed: the run returns 0 with stdout None. `errors="replace"`
+        # above should make that unreachable, but reaching it must cost the
+        # user a line on stderr, not their whole status bar.
+        print("landing: wrapped status line produced no readable output", file=sys.stderr)
+        return None
     return result.stdout.rstrip("\n")
 
 
 def cmd_claude_statusline(args: argparse.Namespace) -> int:
+    # This stdout is read by Claude Code, not by a console, and it reads UTF-8.
+    # Python defaults to the locale encoding for a pipe, so on a non-UTF-8 code
+    # page the separator arrived as mojibake in the status bar (seen on cp949),
+    # and a wrapped status line with a character that code page lacks would
+    # raise instead of printing.
+    _reconfigure(sys.stdout)
+    _reconfigure(sys.stderr)
     raw_payload = sys.stdin.read()
     payload = json.loads(raw_payload)
     snapshot = parse_claude_statusline(payload)
