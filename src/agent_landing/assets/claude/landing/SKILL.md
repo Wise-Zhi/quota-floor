@@ -1,7 +1,7 @@
 ---
 name: landing
 description: This skill should be used when the user asks to "leave me 70% quota", "spend at most 15% on this", "stop before my weekly quota drops below 40%", or otherwise asks for a coding task to be run under an account-quota budget with a hard floor on what must remain afterwards. Syntax: `/landing leave 70 refactor auth` stops while at least 70% still remains; `/landing spend 20 fix the tests` spends at most 20 percentage points.
-argument-hint: '<leave|spend> [weekly|5h] <percent> <task>'
+argument-hint: '<leave|spend> [weekly|5h] <percent> [task]'
 allowed-tools: Bash(landing *)
 version: 0.1.0
 ---
@@ -34,7 +34,7 @@ quota.
 ## Syntax
 
 ```text
-/landing (leave|spend) [weekly|5h] <percent> <task>
+/landing <leave|spend> [weekly|5h] <percent> [task]
 ```
 
 - `leave 70` — stop while at least **70% remains**.
@@ -45,6 +45,8 @@ quota.
   meaning: `spend 15` degrading to `15` would authorize 76 points of spend
   instead of 15, with nothing to catch it.
 - The first word that is neither a keyword, a window, nor a number starts the task.
+- The task is **optional**: `/landing spend 20` on its own puts a floor under the
+  work already under way. The task is a label for the handoff, not a setting.
 - The settings may come **before or after** the task, and task text on both sides
   of the marker is preserved: `继续/landing spend 20` is a `spend 20` budget on the
   task `继续`.

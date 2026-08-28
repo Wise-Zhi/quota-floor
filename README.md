@@ -48,7 +48,7 @@ Terminal:      landing status
 Claude Code shows the expected format directly in slash-command autocomplete:
 
 ```text
-/landing (leave|spend) [weekly|5h] <percent> <task>
+/landing <leave|spend> [weekly|5h] <percent> [task]
 ```
 
 Codex has no such autocomplete, because Landing installs no Codex skill -- see
@@ -58,6 +58,9 @@ message, so task words on either side of it are kept.
 - `leave 70` stops while at least 70% **remains**; `spend 15` spends at most 15
   percentage points. One of the two keywords is **required**: a bare number is
   refused, so that a dropped keyword can never silently mean the opposite.
+- The task is **optional**. `/landing spend 20` on its own puts a floor under the
+  work already under way, so a budget can be added after the task was given
+  rather than having to be restated with it.
 - `weekly` or `5h` **scopes** the floor to one window. Omit it and the floor
   guards every window your plan exposes, stopping at whichever reaches it first.
 - `--` is optional; the first word that is not a keyword, window, or number

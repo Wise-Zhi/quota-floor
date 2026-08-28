@@ -16,7 +16,7 @@ from typing import Any
 #: The window token is optional: `auto` picks the right one per plan, and landing
 #: feasibility is checked on every window regardless. It stays in the syntax
 #: because it still works and hiding a working option only makes it undiscoverable.
-SYNTAX = "/landing (leave|spend) [weekly|5h] <percent> <task>"
+SYNTAX = "/landing <leave|spend> [weekly|5h] <percent> [task]"
 
 EXAMPLES = (
     "/landing leave 70 refactor auth and add tests",
