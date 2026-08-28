@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shlex
+import sys
 from pathlib import Path
 from time import time
 from typing import Any
@@ -442,6 +443,20 @@ def _prompt_context(text: str) -> dict[str, Any]:
     return {"hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": text}}
 
 
+def landing_command(action: str) -> str:
+    """The exact command that will run on *this* machine, for the model to copy.
+
+    With no Codex skill left, nothing tells the model how to invoke Landing, and
+    the bare name is not always on PATH -- observed live: the model tried
+    `landing complete`, hit "not on PATH", and spent a round trip hunting for a
+    launcher. Naming the interpreter that is already running the hook cannot be
+    wrong, because it is the same environment Landing is installed in.
+    """
+    executable = sys.executable
+    quoted = f'"{executable}"' if " " in executable else executable
+    return f"{quoted} -m agent_landing.cli {action}"
+
+
 def _blocked(reason: str) -> dict[str, Any]:
     """Refuse the prompt outright. The model never runs, so it cannot narrate."""
     return {"decision": "block", "reason": reason, "systemMessage": reason}
@@ -525,6 +540,8 @@ def _open_budget_from_prompt(
         f"Quota guard: a budget is already active for this instruction -- {result['interpretation']} "
         "It was established before this turn began; do not run any landing command to set it up, "
         "and do not describe the guard, the budget, or this setup to the user -- in particular do not open by naming a skill or workflow you are applying. "
+        f"When the task is finished, run `{landing_command('complete')}` to stop; that exact "
+        "command works here, whereas a bare `landing` may not be on PATH. "
         + (
             f"The task is: {parsed.task}"
             if parsed.task
