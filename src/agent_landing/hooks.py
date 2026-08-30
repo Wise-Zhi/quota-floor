@@ -11,7 +11,7 @@ from typing import Any
 
 from .budget import BudgetRefused, start_budget
 from .handoff import landing_prompt, reserve_handoff_path, write_fallback_handoff
-from .invocation import extract_invocation, parse_invocation
+from .invocation import extract_invocation, parse_invocation, undecorate
 from .models import LandingState, PolicyDecision, QuotaSnapshot, QuotaWindow, TaskSession
 from .policy import evaluate, unknown_quota_decision
 from .state import CorruptStateError, StateStore
@@ -437,7 +437,7 @@ _CANCEL_HINTS = (
 
 def is_cancel_invocation(prompt: str) -> bool:
     """Did the user type the explicit cancel command, and nothing else?"""
-    return " ".join((prompt or "").split()).casefold() in _CANCEL_INVOCATIONS
+    return undecorate(prompt).casefold() in _CANCEL_INVOCATIONS
 
 
 def suggests_cancel(prompt: str) -> bool:

@@ -224,6 +224,42 @@ def _split_options_and_task(tokens: list[str]) -> tuple[list[str], list[str]]:
 _MARKER = re.compile(r"[/$]landing\b(?=\s|$)", re.IGNORECASE)
 
 
+#: Decoration that survives a copy-paste but changes no meaning: a fenced or
+#: inline code span, a quoted string, a sentence-ending period. Stripped in pairs
+#: from the outside in, before the whole-prompt match.
+_CANCEL_WRAPPERS = ("```", "`", '"', "'", "“”", "「」")
+_CANCEL_TRAILING = ".。!！"
+
+
+def undecorate(prompt: str) -> str:
+    """Strip formatting a user cannot help pasting, keeping the message whole.
+
+    The rescue path is the worst place for a literal match to be brittle. An
+    agent that tells a blocked user to "send `$landing cancel`" renders it as a
+    code span; the user copies it, the backticks come along, and the cancel does
+    nothing -- the agent manufactured the failure it was trying to talk them out
+    of. Observed on Codex 2026-08-29.
+
+    This does not loosen the safety property, which is that the *entire* message
+    must be the command: "why does `/landing cancel` not work?" still carries
+    other words and is still not a cancel. A trailing `?` is deliberately not
+    stripped, so a question stays a question.
+    """
+    text = " ".join((prompt or "").split())
+    changed = True
+    while changed:
+        changed = False
+        for wrapper in _CANCEL_WRAPPERS:
+            opening, closing = (wrapper[0], wrapper[-1]) if len(wrapper) == 2 else (wrapper, wrapper)
+            if len(text) > len(opening) + len(closing) and text.startswith(opening) and text.endswith(closing):
+                text = text[len(opening):-len(closing)].strip()
+                changed = True
+        while text and text[-1] in _CANCEL_TRAILING:
+            text = text[:-1].strip()
+            changed = True
+    return text
+
+
 def extract_invocation(prompt: str) -> tuple[str, bool] | None:
     """Pull a Landing invocation out of a whole user message.
 
@@ -247,7 +283,8 @@ def extract_invocation(prompt: str) -> tuple[str, bool] | None:
     rather than refused. That is the safer side of an unavoidable trade: the
     alternative makes the tool impossible to talk about.
     """
-    match = _MARKER.search(prompt or "")
+    prompt = undecorate(prompt)
+    match = _MARKER.search(prompt)
     if not match:
         return None
     before = prompt[: match.start()].strip()
