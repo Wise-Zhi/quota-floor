@@ -362,6 +362,22 @@ def pre_tool(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
             return gate_failure(store, error)
 
 
+#: Landing subcommands that weaken or end the contract. An agent may read state
+#: freely; it may not release itself.
+_RELEASING_SUBCOMMANDS = ("cancel", "complete", "resume", "start", "invoke", "uninstall")
+
+
+def _releases_the_guard(payload: dict[str, Any]) -> bool:
+    """Is this tool call Landing being asked to stand itself down?"""
+    if _tool_name(payload) not in {"Bash", "shell", "exec_command"}:
+        return False
+    tool_input = _tool_input(payload)
+    command = str(tool_input.get("command") or tool_input.get("cmd") or "").casefold()
+    if "agent_landing" not in command and "landing" not in command:
+        return False
+    return any(re.search(rf"\b{verb}\b", command) for verb in _RELEASING_SUBCOMMANDS)
+
+
 def _pre_tool_locked(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
     # Deliberately does NOT renew a completed segment: a tool call cannot prove a
     # new user instruction, so renewing here would let the agent work straight
@@ -374,6 +390,21 @@ def _pre_tool_locked(payload: dict[str, Any], store: StateStore) -> dict[str, An
     if not current:
         return {}
     session, decision = current
+
+    # Checked in every state, not only past the boundary. The gate guards the
+    # *floor*, but standing the guard down is not a spend -- an agent that can
+    # run `landing cancel` in NORMAL removes the floor before the gate ever has
+    # an opinion, which is the same hole the start ratchet closed. Ending a
+    # budget is the user's, through a channel an agent cannot forge.
+    if _releases_the_guard(payload):
+        return hook_json(
+            decision="deny",
+            reason=(
+                "Ending a quota budget is the user's to do, not the agent's. "
+                "Ask them to send `/landing cancel` (Codex: `$landing cancel`) "
+                "as a whole message."
+            ),
+        )
 
     if decision.state == LandingState.NORMAL:
         return {}
@@ -582,6 +613,9 @@ def _open_budget_from_prompt(
                 preserve=parsed.percent if parsed.means_leave else None,
                 max_spend=None if parsed.means_leave else parsed.percent,
                 cwd=payload.get("cwd") or os.getcwd(),
+                # A UserPromptSubmit is the one channel an agent cannot forge, so
+                # a floor arriving here is the user's own -- including a lower one.
+                authorized_by_user=True,
             )
     except BudgetRefused as refusal:
         return _refuse(store, f"Could not start a quota budget: {refusal}")

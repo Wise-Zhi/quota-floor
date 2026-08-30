@@ -154,3 +154,41 @@ def test_the_inspection_an_agent_needs_to_write_a_handoff_still_works(command):
 
 def test_unbalanced_quoting_is_refused_rather_than_guessed_at():
     assert is_safe_landing_command('git status --short "') is False
+
+
+# --- the agent may not stand the guard down, in any state -------------------
+
+@pytest.mark.parametrize("command", [
+    "landing cancel",
+    "python -m agent_landing.cli cancel",
+    "landing complete",
+    "landing resume",
+    "landing start --leave 5 --task x",
+])
+def test_an_agent_cannot_release_the_guard_even_in_normal(tmp_path, command):
+    """The gate guards the floor; releasing the guard is not a spend.
+
+    Checked in every state, not only past the boundary. `landing cancel` run as
+    a tool call in NORMAL removed the floor before the gate had an opinion --
+    the same hole the start ratchet closed, and widened once a terminal cancel
+    began ending every budget rather than one.
+    """
+    store = store_at(tmp_path, remaining=95.0)
+    payload = {"tool_name": "Bash", "tool_input": {"command": command}, "tool_use_id": "r1"}
+    result = pre_tool(payload, store)
+    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "the user's to do" in result["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize("command", [
+    "landing status",
+    "landing doctor",
+    "git status",
+    "npm start",
+    "restart the dev server",
+])
+def test_reading_landing_state_and_ordinary_work_are_untouched(tmp_path, command):
+    """Only the verbs that weaken the contract are refused."""
+    store = store_at(tmp_path, remaining=95.0)
+    payload = {"tool_name": "Bash", "tool_input": {"command": command}, "tool_use_id": "r2"}
+    assert pre_tool(payload, store) == {}

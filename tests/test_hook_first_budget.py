@@ -13,6 +13,8 @@ leaving the user unguarded while believing otherwise.
 from pathlib import Path
 from time import time
 
+import pytest
+
 from agent_landing.hooks import user_prompt
 from agent_landing.invocation import extract_invocation
 from agent_landing.models import LandingState, QuotaSnapshot, QuotaWindow
@@ -107,14 +109,47 @@ def test_missing_quota_blocks_rather_than_starting_unguarded(tmp_path):
     assert store.load_session() is None
 
 
-def test_a_refused_budget_blocks_and_leaves_the_old_one_standing(tmp_path):
-    """The ratchet still applies when the hook is the one opening the budget."""
+def test_the_user_may_lower_their_own_floor_from_the_chat(tmp_path):
+    """The ratchet keys on the channel, not the direction.
+
+    An agent can run `landing start`; it cannot manufacture a UserPromptSubmit.
+    So a lower floor arriving here is the user's own, and refusing it while
+    allowing `/landing cancel` from the same message was incoherent -- it
+    blocked the milder act, permitted the total one, and sent the user through
+    a completely unguarded state to reach the smaller change.
+    """
     store = seed(tmp_path)
     submit(store, "/landing leave 70 first task")
 
-    result = submit(store, "/landing leave 5 sneak past the floor")
-    assert result["decision"] == "block"
-    assert "Refusing to lower it" in result["reason"]
+    result = submit(store, "/landing leave 50 second task")
+    assert "decision" not in result
+    assert store.load_session().floor_percent == 50
+
+
+def test_lowering_a_floor_says_so_before_anything_else(tmp_path):
+    """The one way this goes wrong is a lower number written in passing.
+
+    A floor tucked into a message about something else would otherwise replace
+    a stricter one the user had forgotten was running, silently.
+    """
+    store = seed(tmp_path)
+    submit(store, "/landing leave 70 first task")
+
+    context = context_of(submit(store, "/landing leave 50 second task"))
+    assert "LOWERED from 70.0% to 50.0%" in context
+
+
+def test_an_agent_still_cannot_lower_the_floor(tmp_path):
+    """The guarantee that survives: only the user's own channel may weaken it."""
+    from agent_landing.budget import BudgetRefused, start_budget
+
+    store = seed(tmp_path)
+    submit(store, "/landing leave 70 first task")
+    snapshot = store.load_snapshot()
+
+    with pytest.raises(BudgetRefused) as excinfo:
+        start_budget(store, snapshot, provider="claude", task="agent task", preserve=5.0)
+    assert "Refusing to lower it" in str(excinfo.value)
     assert store.load_session().floor_percent == 70
 
 
@@ -178,8 +213,8 @@ def test_a_refused_budget_is_also_kept(tmp_path):
     """Not only parse errors: the ratchet refusal is just as invisible."""
     store = seed(tmp_path)
     submit(store, "/landing leave 70 first task")
-    submit(store, "/landing leave 5 lower the floor")
-    assert "Refusing to lower it" in (store.load_refusal() or "")
+    submit(store, "/landing 70 fix the tests")
+    assert "leave or quota to spend" in (store.load_refusal() or "")
 
 
 def test_prose_never_records_a_refusal(tmp_path):

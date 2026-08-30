@@ -86,6 +86,7 @@ def start_budget(
     handoff: str = DEFAULT_HANDOFF,
     cwd: str | None = None,
     config: LandingConfig | None = None,
+    authorized_by_user: bool = False,
 ) -> dict[str, Any]:
     """Open a budget against `snapshot`, or raise `BudgetRefused`.
 
@@ -135,28 +136,37 @@ def start_budget(
         # around the ratchet either: the very next tool call is denied, so the
         # `start` never runs.
         previous = None
+    lowered_from: float | None = None
     if previous is not None and not (previous.is_inactive or previous.is_complete):
         # A budget already in force. Tightening it is always safe and needs no
-        # permission; loosening it is the one thing an agent must never be able
-        # to do, and `start` was a wide-open route to exactly that -- the gate
-        # only guards the boundary, so in NORMAL an agent could replace a 70%
-        # floor with 5% and keep going.
+        # permission. Lowering it is the user's call and nobody else's, so the
+        # ratchet keys on the *channel* rather than the direction: an agent can run
+        # a CLI command but cannot manufacture a UserPromptSubmit, and `start` was
+        # otherwise a wide-open route -- the gate only guards the boundary, so in
+        # NORMAL an agent could replace a 70% floor with 5% and keep going.
         #
         # POSIX rlimits solve the same problem the same way: a limit ratchets one
-        # direction, and going the other way needs privilege. Here the privilege
-        # is `/landing cancel`, which only a real user prompt can perform --
-        # deliberately not a `--force` flag, because a flag is something the
-        # agent can type, and that is the whole point.
+        # direction, and going the other way needs privilege. Here the privilege is
+        # having actually been the user -- deliberately not a `--force` flag,
+        # because a flag is something the agent can type.
+        #
+        # Refusing a lower floor from the chat while allowing `/landing cancel`
+        # there was incoherent: it blocked the milder act, permitted the total one,
+        # and sent the user through a completely unguarded state to reach the
+        # smaller change.
         if floor < previous.floor_percent:
+            lowered_from = previous.floor_percent
+        if floor < previous.floor_percent and not authorized_by_user:
             raise BudgetRefused(
                 f"A quota budget is already in force with a {previous.floor_percent:.1f}% floor "
                 f"on {previous.window}{f' (task: {previous.task!r})' if previous.task else ''}. "
                 f"Refusing to lower it to "
                 f"{floor:.1f}%.\n"
-                "Tightening a floor is always allowed; loosening one is not, because the guard "
-                "would then be weaker than the user asked for.\n"
-                "To replace it, end the contract first: send `/landing cancel` "
-                "(Codex: `$landing cancel`) as a whole message, then start the new budget."
+                "Tightening a floor is always allowed. Lowering one is yours to do, but "
+                "not from a command an agent could run.\n"
+                "Send it in the chat as a whole message instead -- `/landing leave 50` "
+                "(Codex: `$landing leave 50`) -- or `/landing cancel` to end the budget "
+                "entirely."
             )
 
     session = TaskSession(
@@ -255,7 +265,13 @@ def start_budget(
         # Always restated as a REMAINING floor, whichever way the user phrased it,
         # so "leave" and "spend" can never be silently swapped. Shown before any
         # work starts, so a misunderstanding surfaces while it is still free.
-        "interpretation": interpretation(
-            mode, floor, max_spend, remaining, window, scope_windows
+        # Always restated as a REMAINING floor, whichever way the user phrased it.
+        # A floor that just went *down* leads with that, because the one way this
+        # can go wrong is a lower number written into a message about something
+        # else, quietly replacing a stricter floor the user had forgotten about.
+        "interpretation": (
+            (f"Floor LOWERED from {lowered_from:.1f}% to {floor:.1f}%. " if lowered_from else "")
+            + interpretation(mode, floor, max_spend, remaining, window, scope_windows)
         ),
+        "lowered_from_percent": lowered_from,
     }
