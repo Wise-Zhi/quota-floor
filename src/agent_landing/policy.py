@@ -160,9 +160,14 @@ def evaluate(
     snapshot_age_seconds: float | None = None,
     other_windows: list[tuple[str, float]] | None = None,
     unreadable_windows: list[str] | None = None,
+    concurrent_reserve_percent: float = 0.0,
 ) -> PolicyDecision:
     cfg = session.config
-    reserve = estimate_landing_reserve(session.burn_samples, cfg)
+    # Budgets are per conversation, but the quota pool is not. Two tasks each
+    # holding their own reserve against the same pool would both spend down to
+    # their floor and then have room for only one handoff between them, so the
+    # reserves of other live budgets are held on top of this one's.
+    reserve = estimate_landing_reserve(session.burn_samples, cfg) + max(0.0, concurrent_reserve_percent)
     budget_floor = window_floor(session, session.window)
     development_floor = min(100.0, budget_floor + reserve)
     stale = snapshot_age_seconds is not None and snapshot_age_seconds > cfg.max_snapshot_age_seconds

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from contextlib import contextmanager
 from pathlib import Path
 from time import sleep, time
@@ -95,30 +96,95 @@ def adopt_project_state(cwd: str | Path, root: Path) -> Path | None:
 
     Copied rather than moved: an upgrade that silently deletes a user's state is
     a worse trade than one that leaves a stale directory behind. Skipped
-    entirely once the user-level root has a session, so it can never overwrite a
-    live budget.
+    entirely once the user-level root already holds a default budget, so it can
+    never overwrite a live one.
     """
     source = Path(cwd).resolve() / ".landing"
-    if source == root or not (source / "session.json").exists():
+    if source == root:
         return None
-    if (root / "session.json").exists():
+    source_session = source / "sessions" / f"{DEFAULT_SESSION_KEY}.json"
+    if not source_session.exists():
+        source_session = source / "session.json"  # written before budgets were per conversation
+    if not source_session.exists():
         return None
-    root.mkdir(parents=True, exist_ok=True)
-    for name in STATE_FILES:
+    target_session = root / "sessions" / f"{DEFAULT_SESSION_KEY}.json"
+    if target_session.exists() or (root / "session.json").exists():
+        return None
+    target_session.parent.mkdir(parents=True, exist_ok=True)
+    _atomic_write(target_session, source_session.read_text(encoding="utf-8"))
+    for name in ("latest_snapshot.json", "snapshots.jsonl"):
         if (source / name).exists():
             _atomic_write(root / name, (source / name).read_text(encoding="utf-8"))
     return source
 
 
+#: Characters kept from a host-supplied conversation id. Both hosts send UUIDs,
+#: but the id reaches us as untrusted text and becomes a filename.
+_UNSAFE_KEY = re.compile(r"[^A-Za-z0-9._-]")
+DEFAULT_SESSION_KEY = "default"
+
+
+def session_key(session_id: str | None) -> str:
+    """Filename for one conversation's budget.
+
+    The budget belongs to a *conversation*, not to a machine. Quota is
+    account-wide -- which is why the snapshot is shared and lives at the root --
+    but "the pool is shared" does not make the contract shared: it makes several
+    contracts interact, which the policy handles by summing their reserves.
+    Keying by location instead of conversation is what let a budget set for one
+    task block an unrelated task in another chat.
+
+    `default` is the fallback for callers with no conversation: the CLI, and any
+    host that does not send `session_id`.
+    """
+    cleaned = _UNSAFE_KEY.sub("-", (session_id or "").strip())[:120]
+    return cleaned or DEFAULT_SESSION_KEY
+
+
 class StateStore:
-    def __init__(self, cwd: str | Path | None = None, scope: str | None = None):
+    def __init__(
+        self,
+        cwd: str | Path | None = None,
+        scope: str | None = None,
+        session_id: str | None = None,
+    ):
         self.root = resolve_state_root(cwd, scope)
-        self.root.mkdir(parents=True, exist_ok=True)
-        self.session_path = self.root / "session.json"
+        self.sessions_dir = self.root / "sessions"
+        self.sessions_dir.mkdir(parents=True, exist_ok=True)
+        self.session_key = session_key(session_id)
+        self.session_path = self.sessions_dir / f"{self.session_key}.json"
+        # Shared, because quota really is account-wide.
         self.snapshot_path = self.root / "latest_snapshot.json"
         self.history_path = self.root / "snapshots.jsonl"
-        self.lock_path = self.root / "session.lock"
-        self.refusal_path = self.root / "last_refusal.json"
+        # Per conversation, so parallel chats neither serialize on one lock nor
+        # read each other's refusal.
+        self.lock_path = self.sessions_dir / f"{self.session_key}.lock"
+        self.refusal_path = self.sessions_dir / f"{self.session_key}.refusal.json"
+        self._adopt_single_session_layout()
+
+    def _adopt_single_session_layout(self) -> None:
+        """Carry a budget written before budgets were per conversation."""
+        legacy = self.root / "session.json"
+        if self.session_key != DEFAULT_SESSION_KEY or self.session_path.exists():
+            return
+        if not legacy.exists():
+            return
+        try:
+            os.replace(legacy, self.session_path)
+        except OSError:
+            pass
+
+    def iter_sessions(self) -> "list[tuple[str, TaskSession]]":
+        """Every conversation's budget, for commands and cross-budget policy."""
+        found: list[tuple[str, TaskSession]] = []
+        for path in sorted(self.sessions_dir.glob("*.json")):
+            if path.name.endswith(".refusal.json"):
+                continue
+            try:
+                found.append((path.stem, TaskSession.from_dict(json.loads(path.read_text(encoding="utf-8")))))
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+        return found
 
     def _lock_is_stale(self) -> bool:
         try:

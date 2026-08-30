@@ -13,7 +13,7 @@ from .budget import BudgetRefused, start_budget
 from .handoff import landing_prompt, reserve_handoff_path, write_fallback_handoff
 from .invocation import extract_invocation, parse_invocation, undecorate
 from .models import LandingState, PolicyDecision, QuotaSnapshot, QuotaWindow, TaskSession
-from .policy import evaluate, unknown_quota_decision
+from .policy import estimate_landing_reserve, evaluate, unknown_quota_decision
 from .state import CorruptStateError, StateStore
 
 
@@ -232,6 +232,21 @@ def resolve_budget_window(session: TaskSession, snapshot: QuotaSnapshot) -> Quot
     return longest
 
 
+def _concurrent_reserve(store: StateStore) -> float:
+    """Landing reserve owed to *other* live budgets sharing this quota pool.
+
+    A conversation's budget is its own, but the quota is the account's. Ignoring
+    the other budgets is how two tasks both reach their floor and then discover
+    there is room for one handoff between them.
+    """
+    total = 0.0
+    for key, other in store.iter_sessions():
+        if key == store.session_key or other.state == LandingState.STOPPED:
+            continue
+        total += estimate_landing_reserve(other.burn_samples, other.config)
+    return total
+
+
 def evaluate_current(
     store: StateStore,
     count_tool_call: bool = False,
@@ -267,6 +282,7 @@ def evaluate_current(
             window.remaining_percent,
             snapshot_age_seconds=age,
             other_windows=others,
+            concurrent_reserve_percent=_concurrent_reserve(store),
             unreadable_windows=[
                 entry.get("id", "unknown") for entry in snapshot.unreadable_windows
             ],

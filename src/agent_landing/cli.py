@@ -29,10 +29,17 @@ from .providers import CodexAppServerProvider, parse_claude_statusline
 from .state import SCOPES, CorruptStateError, StateStore, adopt_project_state
 
 
-def _store(args: argparse.Namespace) -> StateStore:
+def _store(args: argparse.Namespace, payload: dict[str, Any] | None = None) -> StateStore:
+    """The store for this call, bound to the conversation when one is known.
+
+    Hosts send `session_id` on every hook event. A budget belongs to the
+    conversation the user set it in, so the hooks pass it through; commands run
+    from a terminal have no conversation and fall back to the default budget.
+    """
     return StateStore(
         getattr(args, "cwd", None) or os.getcwd(),
         scope=getattr(args, "state_scope", None),
+        session_id=(payload or {}).get("session_id"),
     )
 
 
@@ -338,9 +345,10 @@ def cmd_hook_pre(args: argparse.Namespace) -> int:
     """
     store = _store(args)
     try:
+        payload = json.load(sys.stdin)
+        store = _store(args, payload)
         if args.platform == "codex":
             _refresh_codex_if_needed(store, args.refresh_after_seconds, args.executable)
-        payload = json.load(sys.stdin)
         result = pre_tool(payload, store)
     except Exception as error:  # noqa: BLE001 - the gate must never fail open
         print(f"landing: gate error: {error}", file=sys.stderr)
@@ -353,6 +361,7 @@ def cmd_hook_post(args: argparse.Namespace) -> int:
     store = _store(args)
     try:
         payload = json.load(sys.stdin)
+        store = _store(args, payload)
         result = post_tool(payload, store)
     except Exception as error:  # noqa: BLE001
         # Fail *safe* rather than closed: this hook only ever ends a session, so
@@ -367,6 +376,7 @@ def cmd_hook_user_prompt(args: argparse.Namespace) -> int:
     store = _store(args)
     try:
         payload = json.load(sys.stdin)
+        store = _store(args, payload)
         if args.platform == "codex":
             # A budget opened here needs a reading to open against, and on a
             # fresh session nothing has refreshed one yet.
@@ -520,20 +530,35 @@ def cmd_cancel(args: argparse.Namespace) -> int:
             ),
         }, indent=2))
         return 0
-    if not session:
+    # Budgets are per conversation, and a terminal has none: `landing cancel`
+    # typed at a shell cannot name the chat whose guard is blocking. So it ends
+    # every live budget. That is the right default for the documented way out of
+    # a denied gate -- cancelling too much costs a floor the user chose to drop,
+    # while cancelling too little leaves them stuck with no way to say which.
+    cancelled: list[dict[str, object]] = []
+    for key, candidate in store.iter_sessions():
+        if candidate.is_cancelled:
+            continue
+        cancel_session(candidate)
+        _store(args, {"session_id": key}).save_session(candidate)
+        cancelled.append({
+            "session": key,
+            "task": candidate.task,
+            "floor_percent": candidate.floor_percent,
+            "segments_completed": candidate.segment_count,
+        })
+    if not cancelled:
+        if session or store.iter_sessions():
+            print(json.dumps({"state": "cancelled", "message": "Budget was already cancelled."}, indent=2))
+            return 0
         raise SystemExit("No quota-budgeted task to cancel.")
-    if session.is_cancelled:
-        print(json.dumps({"state": "cancelled", "message": "Budget was already cancelled."}, indent=2))
-        return 0
-    cancel_session(session)
-    store.save_session(session)
+    floors = ", ".join(f"{entry['floor_percent']:.1f}%" for entry in cancelled)
     print(json.dumps({
         "state": "cancelled",
-        "segments_completed": session.segment_count,
-        "floor_percent": session.floor_percent,
+        "cancelled": cancelled,
         "message": (
-            "Quota budget cancelled. The guard no longer restricts tool use, and a new "
-            f"instruction will NOT restart the {session.floor_percent:.1f}% floor. "
+            f"Quota budget cancelled ({len(cancelled)} active: {floors}). The guard no longer "
+            "restricts tool use, and a new instruction will NOT restart those floors. "
             "Start a new budget to be guarded again."
         ),
     }, indent=2))

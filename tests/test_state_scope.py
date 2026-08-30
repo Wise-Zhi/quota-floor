@@ -126,7 +126,7 @@ def test_the_scope_flag_overrides_the_environment(fake_home, tmp_path, monkeypat
     assert args.func(args) == 0
     capsys.readouterr()
 
-    assert (fake_home / ".landing" / "session.json").exists()
+    assert (fake_home / ".landing" / "sessions" / "default.json").exists()
     assert not (tmp_path / ".landing" / "session.json").exists()
 
 
