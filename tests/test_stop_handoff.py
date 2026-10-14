@@ -99,14 +99,15 @@ def test_an_empty_final_reply_still_lands_with_the_fallback(tmp_path):
     assert "Emergency Fallback" in Path(session.handoff_path).read_text(encoding="utf-8")
 
 
-def test_stop_outside_land_changes_nothing(tmp_path):
+def test_stop_outside_land_releases_without_a_handoff(tmp_path):
+    """Outside LAND the turn simply ends the budget; there is nothing to hand off."""
     store = store_in_land(tmp_path, remaining=95)
     pre_tool({"tool_name": "Read", "tool_input": {"file_path": "a.py"}}, store)
 
     assert stop({"last_assistant_message": "done"}, store) == {}
     session = store.load_session()
-    assert session.state != LandingState.STOPPED
-    assert session.stop_reason is None
+    assert session.stop_reason == "completed_released"
+    assert session.is_inactive
     assert not store.handoffs_dir.exists()
 
 

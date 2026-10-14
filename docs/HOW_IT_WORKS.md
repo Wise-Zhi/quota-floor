@@ -37,14 +37,17 @@ As soon as the task's acceptance criteria are satisfied, the agent stops, even i
 
 ### The budget belongs to one task
 
-The design: `landing complete` marks the session `STOPPED` and freezes the rest
-of that agent turn. The next real user instruction releases the finished
-contract instead of renewing it, so another task or chat does not inherit the
-floor. A new Landing command starts a fresh task budget, while account-level
+A budget covers one instruction and ends by itself when that turn ends: the
+`Stop` hook releases it (or, in LAND, saves the handoff). The agent has nothing
+to run when it finishes, and a forgotten budget cannot linger and claim landing
+reserve from later work. A message you add while the agent is working never ends
+the budget, so adding a sentence cannot leave the rest of the task unguarded. If
+you press stop, no `Stop` fires, so the budget carries over and ends with the
+next turn. A new Landing command starts a fresh budget, while account-level
 quota snapshots and measured burn history remain shared so reserve estimates do
 not reset.
 
-The agent's `landing complete` never actually runs. The gate intercepts it and
+An agent may still run `landing complete`; it never actually runs. The gate intercepts it and
 completes the conversation's own budget, because only the hook knows which
 conversation is asking; the command run from a terminal would act on the
 terminal's budget instead. The agent sees a denial whose reason confirms the

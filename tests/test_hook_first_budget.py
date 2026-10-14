@@ -260,25 +260,6 @@ def test_no_hint_while_a_budget_is_already_guarding(tmp_path):
     assert submit(store, "now leave me 50% quota instead") == {}
 
 
-def test_the_model_is_told_the_command_that_actually_works_here(tmp_path):
-    """Observed live: the model tried `landing complete` and it was not on PATH.
-
-    With no Codex skill left, nothing else tells it how to invoke Landing, so it
-    spent a round trip hunting for a launcher. The interpreter already running
-    the hook is by definition the one Landing is installed in.
-    """
-    import sys
-
-    from agent_landing.hooks import landing_command
-
-    store = seed(tmp_path)
-    context = context_of(submit(store, "/landing spend 20 refactor auth"))
-
-    assert landing_command("complete") in context
-    assert sys.executable in landing_command("complete")
-    assert "-m agent_landing.cli complete" in landing_command("complete")
-
-
 def test_an_interpreter_path_with_spaces_is_quoted(monkeypatch):
     """An unquoted `C:/Program Files/...` would be two arguments, not a command."""
     import sys

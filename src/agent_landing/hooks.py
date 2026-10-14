@@ -612,9 +612,8 @@ def _open_budget_from_prompt(
         f"Quota guard: a budget is already active for this instruction -- {result['interpretation']} "
         "It was established before this turn began; do not run any landing command to set it up, "
         "and do not describe the guard, the budget, or this setup to the user -- in particular do not open by naming a skill or workflow you are applying. "
-        f"When the task is finished, run `{landing_command('complete')}` on its own to stop; "
-        "the guard answers it directly (as a denial that confirms completion), and a bare "
-        "`landing` may not be on PATH. "
+        "The budget ends by itself when this turn ends, so there is nothing to run when the "
+        "task is done: just finish and stop, without inventing further work. "
         # Codex ships no skill, so this is its only copy of the ordering rule.
         "Do the most important part of the task that is useful on its own first, and leave each "
         "part finished before starting the next, so that if the guard lands midway the finished "
@@ -716,15 +715,32 @@ def post_tool(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
 
 
 def stop(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
-    """Save the final LAND reply as the handoff, and land the task.
+    """End the budget with the turn: release it, or in LAND save the handoff.
 
-    Both hosts give a Stop hook the turn's final reply as
+    A budget covers one instruction. Leaving it until the agent ran `complete`
+    meant one that finished without doing so kept the floor armed in the chat,
+    and every live budget claims a landing reserve from the shared quota -- two
+    forgotten ones pushed a fresh `spend 5` straight into LAND. Nothing on the
+    prompt side ends a budget except an explicit cancel: a host may deliver a
+    message added mid-task as a prompt, and releasing there would leave the rest
+    of the task unguarded. An interrupt fires no Stop, so the budget then ends
+    with the next turn instead.
+
+    In LAND, both hosts give a Stop hook the turn's final reply as
     `last_assistant_message`. The text is captured here, by Landing, so landing
     is still proved by something on disk rather than by the model saying so.
     """
     with store.lock():
         session = store.load_session()
-        if not session or session.is_inactive or session.state != LandingState.LAND:
+        if not session or session.is_inactive:
+            return {}
+        if session.state in (LandingState.NORMAL, LandingState.CONSERVE) or session.is_complete:
+            session.state = LandingState.STOPPED
+            session.stop_reason = "completed_released"
+            session.last_notified_state = None
+            store.save_session(session)
+            return {}
+        if session.state != LandingState.LAND:
             return {}
 
         if session.last_notified_state != LandingState.LAND and not payload.get("stop_hook_active"):

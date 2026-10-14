@@ -43,9 +43,9 @@ protected while nothing was guarding their quota.
 ## While working
 
 Execute the requested task normally. Treat the floor as a hard lower bound, never
-as a spending target. When the task is done, run `landing complete` and stop —
-never invent extra work, tests, refactors, or polish to consume the unused
-allowance.
+as a spending target. When the task is done, stop — never invent extra work,
+tests, refactors, or polish to consume the unused allowance. There is nothing to
+run: the budget ends by itself when this turn ends.
 
 Order the work by value: do the most important part of the task that is useful
 on its own first, and leave each part finished before starting the next. LAND can
@@ -58,7 +58,8 @@ Landing is a constraint on the task, not the task itself. Use ordinary contextua
 judgment for natural requests such as `try it` or `take a look`; infer their
 subject from the project and conversation exactly as you would without Landing.
 
-The budget covers this task only; a later Landing invocation starts a fresh one.
+The budget covers this instruction only and ends with this turn; a later Landing
+invocation starts a fresh one.
 
 When hooks inject CONSERVE, LAND, EMERGENCY, or STOPPED state, follow them exactly.
 
@@ -68,4 +69,4 @@ If the user wants the budget itself to end — "stop watching my quota", "forget
 budget", "cancel that" — **do not run a cancel command**. An agent cannot lift its
 own quota floor, and at the boundary the attempt is denied. Tell the user to send
 `/landing cancel` as their whole message; the hook stands the guard down before the
-next turn begins. Use `landing complete` only when the *task* is done.
+next turn begins.

@@ -15,6 +15,10 @@ All notable changes to Agent Landing are recorded here.
   Chinese keywords (留/保留/剩, 花/花费/用); autocomplete shows
   `leave|spend <percent> [task]`.
 - Under a budget, the agent does the most valuable part of the task first.
+- A budget covers one instruction and ends by itself when that turn ends; the
+  agent no longer has to run `landing complete`. A message added mid-task never
+  ends it, and after an interrupt it ends with the next turn. `/landing cancel`
+  remains as the way out when something is stuck.
 
 ### Fixed
 

@@ -162,8 +162,9 @@ write LAND exists to permit). It also cluttered folders that were often not
 projects. `post_tool()` remains only as a no-op for sessions that loaded the old
 hooks; the installer removes its entry.
 
-`user_prompt()` releases `task_complete` only after control returns to the user;
-it never renews the old floor.
+`stop()` also ends a budget that is not in LAND: the turn is over, so the budget
+is released (`completed_released`). `user_prompt()` never ends a budget except on
+an explicit cancel.
 
 ### `handoff.py`
 
@@ -222,9 +223,25 @@ on terms the guard would not have enforced. Comparing every window against the
 single absolute floor derived from the budget window was wrong for `spend`, which
 is a per-window delta.
 
-## A budget belongs to one task
+## A budget belongs to one instruction, and ends with its turn
 
-An agent ends its task with `landing complete`, which `pre_tool()` handles
+The first `Stop` after a budget opens releases it (`completed_released`, an
+inactive state for which `evaluate_current` returns no gate decision); in LAND
+that same `Stop` saves the handoff instead. Leaving the budget until the agent
+ran `complete` meant an agent that finished without doing so kept the floor
+armed in the chat -- and every live budget claims a landing reserve from the
+shared quota, so two forgotten budgets pushed a fresh `spend 5` straight into
+LAND (ChatGPT Work mode, 2026-10-15).
+
+Nothing on the prompt side ends a budget except an explicit cancel. A host may
+deliver a message the user adds mid-task as a prompt, and releasing there would
+leave the rest of the task silently unguarded -- the failure this project ranks
+worst. An interrupt fires no `Stop` (documented for Claude Code), so after one
+the budget carries over and ends with the next turn instead. That overstay is
+bounded to one turn, and a floor is a limit, so it can only stop work early.
+
+The agent is no longer told to run anything when it finishes. An agent may
+still run `landing complete`, which `pre_tool()` handles
 itself rather than letting the command run: the hook has the payload's
 `session_id`, and the CLI would act on the terminal's `default` budget. It
 accepts only the bare command, in `NORMAL` or `CONSERVE`; anything chained to it
@@ -233,7 +250,8 @@ is still a release and denied, and in `LAND` the handoff is still due.
 the model from declaring completion and continuing to spend. The next
 `UserPromptSubmit` changes it to `completed_released`, an inactive state for which
 `evaluate_current` returns no gate decision. It never renews the old floor. A
-later Landing invocation creates a fresh task contract. Quota snapshots and burn
+later Landing invocation creates a fresh task contract. With turn-scoped budgets the
+`Stop` at the end of that turn releases it anyway. Quota snapshots and burn
 samples remain account-scoped because they describe the shared provider account,
 not the lifecycle of one command.
 
@@ -281,7 +299,7 @@ Every denial the gate emits carries `CANCEL_HINT`, so the message that blocks a 
 ## Core invariants
 
 1. A quota floor is a limit, never a target.
-2. `complete` freezes the current turn even far above the floor; the next user instruction releases, never renews, that task contract.
+2. A budget ends with the turn it was opened for, even far above the floor; nothing renews it, and a message added mid-task never ends it.
 3. Unknown quota is never fabricated as 100% available, and neither is stale quota.
 4. Runway telemetry cannot change enforcement decisions.
 5. The model is not asked to calculate whether the model should spend more quota, nor to parse the invocation.

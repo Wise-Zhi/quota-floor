@@ -47,9 +47,14 @@ Verify that the task is `STOPPED` and that no logic attempts to spend down to 75
 
 Relevant regression tests: `tests/test_hooks.py::test_task_complete_stops_even_far_above_floor`, and `tests/test_budget_contract.py::test_completed_task_blocks_more_work_in_the_same_turn`.
 
-### 2. Completion freezes the turn but does not leak into the next task
+### 2. A budget ends with its turn and does not leak into the next task
 
-Verify that after `landing complete`:
+Verify that the `Stop` at the end of the turn releases a NORMAL or CONSERVE
+budget; that a prompt added mid-task does not end it; and that after an
+interrupt (no `Stop`) it ends with the next turn. Relevant tests:
+`tests/test_turn_scoped_budget.py`.
+
+Verify too that after `landing complete`:
 
 - a tool call is still denied — the agent cannot renew its own segment;
 - a later `UserPromptSubmit` releases rather than restarts the completed budget;
