@@ -48,7 +48,7 @@ Terminal:      landing status
 Claude Code shows the expected format directly in slash-command autocomplete:
 
 ```text
-/landing <leave|spend> [weekly|5h] <percent> [task]
+/landing leave|spend <percent> [task]
 ```
 
 Codex has no such autocomplete, because Landing installs no Codex skill -- see
@@ -65,6 +65,11 @@ message, so task words on either side of it are kept.
   guards every window your plan exposes, stopping at whichever reaches it first.
 - `--` is optional; the first word that is not a keyword, window, or number
   starts the task.
+- Plain phrasing around the settings is read too: `/landing leave me 70% quota`,
+  `/landing spend at most 15% on this`. A qualifier that contradicts the keyword
+  (`leave at most 30`) is refused rather than guessed.
+- Chinese keywords follow the same rules: `留`/`保留` mean `leave`, `花`/`用`
+  mean `spend` -- `/landing 留 70 修测试`, `/landing 最多花20%`.
 - The settings may come **before or after** the task, whichever reads more
   naturally: `leave 70 fix the tests` and `fix the tests leave 70` are the
   same request. A trailing group is only recognized when it is complete (a

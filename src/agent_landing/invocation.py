@@ -13,10 +13,10 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-#: The window token is optional: `auto` picks the right one per plan, and landing
-#: feasibility is checked on every window regardless. It stays in the syntax
-#: because it still works and hiding a working option only makes it undiscoverable.
-SYNTAX = "/landing <leave|spend> [weekly|5h] <percent> [task]"
+#: What autocomplete teaches, so it holds only what nearly everyone needs. The
+#: optional `weekly`/`5h` token still works -- the floor guards every window by
+#: default, so scoping it to one is rare -- and is documented in the README.
+SYNTAX = "/landing leave|spend <percent> [task]"
 
 EXAMPLES = (
     "/landing leave 70 refactor auth and add tests",
@@ -33,9 +33,14 @@ EXAMPLES = (
 #: authorizing 76 points of spend instead of 15, with nothing to catch it. Making
 #: the keyword mandatory removes that path structurally rather than relying on the
 #: typo being unlikely.
+_CJK_LEAVE = ("保留", "剩下", "留", "剩")
+_CJK_SPEND = ("花费", "花", "用")
+
 _MODE_ALIASES = {
     "leave": "preserve", "keep": "preserve", "preserve": "preserve", "reserve": "preserve",
     "spend": "max_spend", "use": "max_spend", "max": "max_spend", "budget": "max_spend",
+    **{word: "preserve" for word in _CJK_LEAVE},
+    **{word: "max_spend" for word in _CJK_SPEND},
 }
 
 _WINDOW_ALIASES = {
@@ -43,12 +48,151 @@ _WINDOW_ALIASES = {
     "7d": "seven_day", "seven_day": "seven_day", "sevenday": "seven_day",
     "5h": "five_hour", "5hour": "five_hour", "five_hour": "five_hour",
     "fivehour": "five_hour", "hourly": "five_hour",
+    "每周": "seven_day", "一周": "seven_day", "5小时": "five_hour", "五小时": "five_hour",
 }
 
 # A floor is a bare number, optionally with a percent sign. Requiring digits only
 # is what makes `5h` unambiguously a window token rather than a floor of 5 -- the
-# old syntax needed a written warning telling the model not to confuse them.
-_FLOOR = re.compile(r"^(\d{1,3}(?:\.\d+)?)%?$")
+# old syntax needed a written warning telling the model not to confuse them. A
+# trailing comma is punctuation: "leave 70, fix the tests".
+_FLOOR = re.compile(r"^(\d{1,3}(?:\.\d+)?)[%％]?[,，;；:：]?$")
+
+# --- natural phrasing --------------------------------------------------------
+#
+# "leave me 70% quota", "spend at most 15% on this", "至少留70%". Filler is
+# accepted *around* the keyword and the number, never in place of either, so the
+# rule that a missing keyword is not a legal meaning still holds. A qualifier
+# carries a direction of its own, and one that contradicts the keyword ("leave
+# at most 30") is refused: there is no sound reading of it to guess.
+
+_LEAVE_QUALIFIERS = (("at", "least"), ("至少",), ("不少于",))
+_SPEND_QUALIFIERS = (
+    ("no", "more", "than"), ("at", "most"), ("up", "to"), ("only",),
+    ("最多",), ("不超过",), ("只",),
+)
+_QUALIFIERS = tuple((words, "preserve") for words in _LEAVE_QUALIFIERS) + tuple(
+    (words, "max_spend") for words in _SPEND_QUALIFIERS
+)
+_PRONOUNS = (("me",), ("us",))
+_QUOTA_NOUNS = (("of", "my", "quota"), ("of", "the", "quota"), ("of", "quota"), ("quota",), ("额度",))
+
+_CJK_QUALIFIER = "|".join(sorted(("至少", "不少于", "最多", "不超过", "只"), key=len, reverse=True))
+_CJK_MODE = "|".join(sorted(_CJK_LEAVE + _CJK_SPEND, key=len, reverse=True))
+# A Chinese keyword is often written against its number or task: `留70`,
+# `最多花20%`, `留70%修测试`. Text may follow the number only after an explicit
+# `%`, so task text that merely starts with a keyword -- `用3个线程跑测试` --
+# is never split into a budget.
+_CJK_GLUED = re.compile(
+    rf"^({_CJK_QUALIFIER})?({_CJK_MODE})({_CJK_QUALIFIER})?"
+    rf"(?:(\d{{1,3}}(?:\.\d+)?)([%％])?)?(.*)$"
+)
+
+
+def _split_glued(token: str) -> list[str]:
+    match = _CJK_GLUED.match(token)
+    if not match:
+        return [token]
+    before, mode, after, number, percent, rest = match.groups()
+    if rest and not (number and percent):
+        return [token]
+    pieces = [before, mode, after, f"{number}{percent or ''}" if number else None, rest]
+    return [piece for piece in pieces if piece]
+
+
+def _match_words(tokens: list[str], at: int, choices: tuple[tuple[str, ...], ...]) -> int:
+    """Length of the multi-word choice starting at `at`, or 0."""
+    for words in choices:
+        end = at + len(words)
+        if end <= len(tokens) and tuple(token.lower() for token in tokens[at:end]) == words:
+            return len(words)
+    return 0
+
+
+def _match_qualifier(tokens: list[str], at: int) -> tuple[int, str] | None:
+    for words, direction in _QUALIFIERS:
+        if _match_words(tokens, at, (words,)):
+            return len(words), direction
+    return None
+
+
+def _match_phrase(tokens: list[str], at: int) -> tuple[int, list[str], list[str]] | None:
+    """Read `[qualifier] keyword [window|me|qualifier]... number [quota]` at `at`.
+
+    Returns where it ends, the tokens that carry meaning (keyword, window,
+    number), and the directions any qualifiers imply.
+    """
+    index, kept, directions = at, [], []
+    qualifier = _match_qualifier(tokens, index)
+    if qualifier:
+        index += qualifier[0]
+        directions.append(qualifier[1])
+    if index >= len(tokens) or not _mode_id(tokens[index]):
+        return None
+    kept.append(tokens[index])
+    index += 1
+    while index < len(tokens):
+        if _window_id(tokens[index]):
+            kept.append(tokens[index])
+            index += 1
+            continue
+        pronoun = _match_words(tokens, index, _PRONOUNS)
+        if pronoun:
+            index += pronoun
+            continue
+        qualifier = _match_qualifier(tokens, index)
+        if qualifier:
+            index += qualifier[0]
+            directions.append(qualifier[1])
+            continue
+        break
+    if index >= len(tokens) or not _FLOOR.match(tokens[index]):
+        return None
+    kept.append(tokens[index])
+    index += 1
+    index += _match_words(tokens, index, _QUOTA_NOUNS)
+    return index, kept, directions
+
+
+def _normalize_segment(tokens: list[str]) -> tuple[list[str], str | None]:
+    """Reduce a natural-language settings phrase at either end to canonical tokens."""
+    if not tokens:
+        return tokens, None
+    tokens = _split_glued(tokens[0]) + tokens[1:]
+    if len(tokens) > 1:
+        tokens = tokens[:-1] + _split_glued(tokens[-1])
+
+    start = 1 if _window_id(tokens[0]) else 0
+    found = _match_phrase(tokens, start)
+    span = (start, found) if found else None
+    if span is None:
+        for at in range(1, len(tokens)):
+            found = _match_phrase(tokens, at)
+            if found and found[0] == len(tokens):
+                span = (at, found)
+                break
+    if span is None:
+        return tokens, None
+
+    at, (end, kept, directions) = span
+    mode = _mode_id(kept[0])
+    if any(direction != mode for direction in directions):
+        phrase = " ".join(tokens[at:end])
+        return tokens, (
+            f"{phrase!r} contradicts itself: 'leave' is a floor that must remain, "
+            "'spend' is a ceiling on spending, and the qualifier points the other way."
+        )
+    return tokens[:at] + kept + tokens[end:], None
+
+
+def _normalize(tokens: list[str]) -> tuple[list[str], str | None]:
+    if "--" in tokens:
+        at = tokens.index("--")
+        before, error = _normalize_segment(tokens[:at])
+        if error:
+            return tokens, error
+        after, error = _normalize_segment(tokens[at + 1:])
+        return before + ["--"] + after, error
+    return _normalize_segment(tokens)
 
 
 #: Bare verbs that end the contract rather than starting one. Recognized here as
@@ -182,6 +326,13 @@ def _leading_options(tokens: list[str]) -> tuple[list[str], list[str]]:
     for index, token in enumerate(tokens):
         if not _is_option_token(token):
             return tokens[:index], tokens[index:]
+        # `use` and `用` are spend aliases and also how many tasks begin: "leave
+        # 70 use pytest". Once the group is complete, a keyword not followed by
+        # another setting starts the task. One that *is* followed by one --
+        # "leave 70 spend 20" -- stays in the group and is refused as a conflict.
+        followed_by_setting = index + 1 < len(tokens) and _is_option_token(tokens[index + 1])
+        if _mode_id(token) and _is_complete_settings(tokens[:index]) and not followed_by_setting:
+            return tokens[:index], tokens[index:]
     return list(tokens), []
 
 
@@ -303,6 +454,9 @@ def parse_invocation(raw: str) -> ParsedInvocation:
         # the contract is not something to infer from a passing mention.
         return ParsedInvocation(ok=True, action="cancel")
 
+    tokens, contradiction = _normalize(tokens)
+    if contradiction:
+        return _fail(contradiction)
     option_tokens, task_tokens = _split_options_and_task(tokens)
 
     windows: list[str] = []

@@ -20,7 +20,7 @@ from .hooks import (
     user_prompt,
 )
 from .installation import HOSTS, InstallationConflict, doctor_host, install_host, uninstall_host
-from .invocation import parse_invocation
+from .invocation import extract_invocation, parse_invocation
 from .budget import BudgetRefused, start_budget
 from .models import LandingConfig, LandingState, QuotaSnapshot, QuotaWindow, TaskSession
 from .policy import evaluate, window_floor, window_pressure
@@ -303,7 +303,10 @@ def cmd_invoke(args: argparse.Namespace) -> int:
     Both hosts call this with the raw argument string, so the two syntaxes cannot
     drift apart and a user cannot learn one and be burned by the other.
     """
-    parsed = parse_invocation(args.arguments)
+    # The skill tells the model to drop the marker; one that passes the message
+    # through whole must not turn a valid request into a refusal.
+    found = extract_invocation(args.arguments)
+    parsed = parse_invocation(found[0] if found else args.arguments)
     if parsed.ok and parsed.action == "cancel":
         # `/landing cancel` normally never reaches here -- the UserPromptSubmit
         # hook stands the guard down before the agent runs anything. This is the
