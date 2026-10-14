@@ -95,7 +95,17 @@ def start_budget(
     config = config or LandingConfig()
     # Naming a window scopes the floor to it; `auto` guards every window.
     floor_everywhere = window == "auto"
-    if floor_everywhere:
+    if floor_everywhere and preserve is None and snapshot.window("five_hour"):
+        # `spend N` is measured on the five-hour window when the plan has one.
+        # On Plus -- most users -- that is the window that actually limits a
+        # session, and weekly points are too coarse a unit for "at most N on
+        # this task". The other windows keep only the landing-feasibility check
+        # (a floor of zero), so they still force a landing before running out.
+        # `leave N` names an absolute level and keeps guarding every window.
+        window = "five_hour"
+        floor_everywhere = False
+        chosen = snapshot.window(window)
+    elif floor_everywhere:
         chosen = snapshot.longest_window()
         if not chosen:
             raise BudgetRefused("No quota windows are available; cannot start a budget.")
@@ -208,29 +218,30 @@ def start_budget(
     # derived from the budget window was wrong for `spend`, which is a per-window
     # delta: with the five-hour window normally further burned than the weekly
     # one, an ordinary `spend 15` was refused outright.
-    if floor_everywhere:
-        mode_word = "spend" if mode == "max_spend" else "leave"
-        shown = max_spend if mode == "max_spend" and max_spend is not None else floor
-        breached = []
-        for w in snapshot.windows:
-            limit = window_floor(session, w.id)
-            state, _ = window_pressure(
-                w.id, w.remaining_percent, limit, config.default_reserve_percent, config
-            )
-            if state == LandingState.EMERGENCY:
-                breached.append((w, limit))
-        if breached:
-            detail = ", ".join(
-                f"{w.id} at {w.remaining_percent:.1f}% (floor {limit:.1f}%)"
-                for w, limit in breached
-            )
-            raise BudgetRefused(
-                f"The requested floor has already been reached on {detail}. "
-                "The floor applies to every quota window your plan exposes. Either lower "
-                f"the floor, or scope it to one window: --window {window}, or "
-                f"`{mode_word} {WINDOW_WORD.get(window, window)} {shown:g}` "
-                "in a /landing invocation."
-            )
+    # This runs for a scoped budget too: its other windows carry a floor of
+    # zero, so they refuse only when already exhausted.
+    mode_word = "spend" if mode == "max_spend" else "leave"
+    shown = max_spend if mode == "max_spend" and max_spend is not None else floor
+    breached = []
+    for w in snapshot.windows:
+        limit = window_floor(session, w.id)
+        state, _ = window_pressure(
+            w.id, w.remaining_percent, limit, config.default_reserve_percent, config
+        )
+        if state == LandingState.EMERGENCY:
+            breached.append((w, limit))
+    if breached:
+        detail = ", ".join(
+            f"{w.id} at {w.remaining_percent:.1f}% (floor {limit:.1f}%)"
+            for w, limit in breached
+        )
+        raise BudgetRefused(
+            f"The requested floor has already been reached on {detail}. "
+            "The floor applies to every quota window your plan exposes. Either lower "
+            f"the floor, or scope it to one window: --window {window}, or "
+            f"`{mode_word} {WINDOW_WORD.get(window, window)} {shown:g}` "
+            "in a /landing invocation."
+        )
 
     store.save_session(session)
     store.save_snapshot(snapshot)

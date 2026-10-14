@@ -74,13 +74,15 @@ def test_spend_is_measured_per_window_by_the_preflight_check(tmp_path, capsys):
     args = build_parser().parse_args(argv)
     assert args.func(args) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["floor_applies_to"] == ["five_hour", "seven_day"]
+    # Since 2026-10-15 `spend` binds to the five-hour window when there is one;
+    # the weekly window keeps only the feasibility check (test_spend_on_five_hour).
+    assert payload["floor_applies_to"] == ["five_hour"]
 
     from agent_landing.policy import window_floor
     session = StateStore(tmp_path).load_session()
-    # 15 points off where each window actually stood, not 75% everywhere.
+    # 15 points off where five-hour actually stood, not 75%.
     assert window_floor(session, "five_hour") == 5.0
-    assert window_floor(session, "seven_day") == 75.0
+    assert window_floor(session, "seven_day") == 0.0
 
 
 def test_spend_is_still_refused_when_a_window_cannot_afford_it(tmp_path):
