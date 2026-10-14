@@ -17,10 +17,10 @@ Once published, the same environment can be created from PyPI instead of a
 checkout:
 
 ```bash
-pipx install agent-landing
+pipx install quota-floor
 ```
 
-The distribution is `agent-landing`; the command it installs is `landing`.
+The distribution is `quota-floor`; the command it installs is `landing`.
 
 `pipx` is recommended because it keeps a stable Python environment after the
 checkout is moved or deleted. A normal virtual environment also works, but that

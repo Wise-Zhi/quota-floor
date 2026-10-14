@@ -1,8 +1,8 @@
-# Agent Landing Architecture
+# Quota Floor Architecture
 
 ## Purpose
 
-Agent Landing is a provider-neutral quota budget guard for coding agents. A user can give a task a quota constraint such as "leave at least 75% weekly quota". The guard monitors real provider quota outside the model, reserves enough quota to land safely, blocks new implementation work at the landing boundary, writes a resumable handoff, and stops.
+Quota Floor is a provider-neutral quota budget guard for coding agents. A user can give a task a quota constraint such as "leave at least 75% weekly quota". The guard monitors real provider quota outside the model, reserves enough quota to land safely, blocks new implementation work at the landing boundary, writes a resumable handoff, and stops.
 
 The requested percentage is a **floor, not a spending target**. If a task finishes while 91% remains and the floor is 75%, the task stops at 91%.
 

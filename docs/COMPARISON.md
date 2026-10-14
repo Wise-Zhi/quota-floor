@@ -9,7 +9,7 @@ something here is wrong or out of date, please open an issue.
 | Claude Code `--max-budget-usd` | API dollars, one `-p` run | when the dollar cap is reached | n/a | an error result |
 | claude-usage-guard | subscription windows | when a window is exhausted | fails open (work continues) | a scheduled wake-up after the reset |
 | Quota viewers (codex-quota, quse, cq, ai-quota) | subscription windows | never: they only display | shown as unavailable | nothing; they enforce no limit |
-| **Agent Landing** | **% of each subscription window** | **at your floor, minus a measured landing reserve** | **never read as full: budget stays in CONSERVE** | **a handoff saved outside your project** |
+| **Quota Floor** | **% of each subscription window** | **at your floor, minus a measured landing reserve** | **never read as full: budget stays in CONSERVE** | **a handoff saved outside your project** |
 
 ## Claude Code `--max-budget-usd`
 

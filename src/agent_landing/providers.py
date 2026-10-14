@@ -199,7 +199,7 @@ class CodexAppServerProvider:
                 "params": {
                     "clientInfo": {
                         "name": "agent_landing",
-                        "title": "Agent Landing",
+                        "title": "Quota Floor",
                         "version": __version__,
                     }
                 },

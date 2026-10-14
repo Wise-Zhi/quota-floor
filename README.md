@@ -1,8 +1,8 @@
-# Agent Landing
+# Quota Floor
 
 **English** | [简体中文](README.zh-CN.md)
 
-**Tell Claude Code or Codex how much of your subscription quota to leave untouched. When quota gets close to that floor, Landing blocks further edits, and the agent writes a handoff and stops.**
+**Tell Claude Code or Codex how much of your subscription quota to leave untouched. When quota gets close to that floor, its `landing` guard blocks further edits, and the agent writes a handoff and stops.**
 
 ```text
 /landing leave 70 fix the tests
@@ -19,7 +19,7 @@ it hits that reserve. If the task finishes at 91%, it stops at 91%. **The floor 
 ## Install
 
 ```bash
-pipx install git+https://github.com/zhixun123/landing
+pipx install git+https://github.com/Wise-Zhi/quota-floor
 landing install
 landing doctor
 ```

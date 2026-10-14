@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Zero-quota demo of Agent Landing: a budget opens, LAND denies a write, the
+# Zero-quota demo of Quota Floor: a budget opens, LAND denies a write, the
 # final reply is saved as the handoff.
 #
 # It feeds the real hook commands the same JSON payloads Claude Code sends, in a
@@ -8,7 +8,7 @@
 #   asciinema rec -c "bash examples/demo/demo.sh" landing-demo.cast
 #   agg landing-demo.cast landing-demo.gif      # optional GIF
 #
-# Env: LANDING_PY  python that has agent-landing installed (default: python)
+# Env: LANDING_PY  python that has quota-floor installed (default: python)
 #      DEMO_PAUSE  seconds between steps (default: 1.5; 0 for a dry run)
 set -euo pipefail
 

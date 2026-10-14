@@ -1,4 +1,4 @@
-# Testing Agent Landing
+# Testing Quota Floor
 
 This document is intended for both humans and coding agents reviewing the alpha MVP.
 
@@ -24,7 +24,7 @@ landing --help
 landing simulate --start 100 --leave 70 --burn 0.5,0.7,0.6 --step 2
 ```
 
-> The suite clears `LANDING_HOME`/`AGENT_LANDING_HOME` via `tests/conftest.py`. Without that, anyone who actually uses Agent Landing would have their live `.landing/` written to by the tests, and stores that are supposed to be independent would collapse into one directory.
+> The suite clears `LANDING_HOME`/`AGENT_LANDING_HOME` via `tests/conftest.py`. Without that, anyone who actually uses Quota Floor would have their live `.landing/` written to by the tests, and stores that are supposed to be independent would collapse into one directory.
 
 ## High-priority behavioral tests
 
@@ -252,12 +252,12 @@ that chose not to write.
 
 Test composer discovery separately from hook enforcement:
 
-1. Search for Agent Landing until its syntax row is visible.
+1. Search for Quota Floor until its syntax row is visible.
 2. Record the displayed `shortDescription`.
 3. Press Space without selecting the row. On Codex
    `0.149.0-alpha.4.3`, the row disappears because it was an autocomplete
    candidate, not a persistent argument hint.
-4. Select Agent Landing first and confirm that Codex offers the configured
+4. Select Quota Floor first and confirm that Codex offers the configured
    editable `defaultPrompt`: `Use $landing leave 75 <task>`.
 5. Use `skills/list` to capture the interface fields returned by the host. On
    the verified build it returns `shortDescription` and `defaultPrompt`, but no
@@ -302,7 +302,7 @@ What the last capture established, and what to re-check:
 - A **Plus** account reports both windows (`primary` 300 min, `secondary` 10080 min). Do not assume a plan implies a single window — that assumption is what let a floor bind to the window that never binds.
 - The percentage key is `usedPercent`, camelCase and *consumed*. There is no remaining-percent key.
 - `resetsAt` is integer Unix seconds.
-- `rateLimitReachedType`, `spendControlReached`, `individualLimit` and `credits` are reported but not yet consumed by Agent Landing.
+- `rateLimitReachedType`, `spendControlReached`, `individualLimit` and `credits` are reported but not yet consumed by Quota Floor.
 
 If the percentage key is ever absent or renamed, the window is recorded as unreadable rather than dropped, which forces `CONSERVE`. Verify that path rather than assuming the parse succeeded.
 

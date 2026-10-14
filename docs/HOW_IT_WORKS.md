@@ -1,11 +1,11 @@
-# How Agent Landing works
+# How Quota Floor works
 
 This is the detail behind the README's short version. For components and code
 layout see [ARCHITECTURE.md](ARCHITECTURE.md); for what has been checked on real
 hosts see [VERIFICATION.md](VERIFICATION.md).
 
 ## The landing reserve
-Agent Landing treats the last part of the budget as a **landing reserve**. A requested percentage is a **floor, never a spending target**: if the task finishes with 91% remaining even though the user asked to preserve 75%, Agent Landing stops at 91%. It never invents extra work to consume the allowance.
+Quota Floor treats the last part of the budget as a **landing reserve**. A requested percentage is a **floor, never a spending target**: if the task finishes with 91% remaining even though the user asked to preserve 75%, Quota Floor stops at 91%. It never invents extra work to consume the allowance.
 
 ```text
 current remaining quota
@@ -80,7 +80,7 @@ Unreadable windows are named in `landing status` and the statusline instead of v
 
 ## Burn-rate runway (not task-cost prediction)
 
-Agent Landing deliberately does **not** predict "this task will cost 8%". Task-size forecasts are too dependent on unknown repo complexity, debugging branches, model behavior, cache effects, and provider accounting.
+Quota Floor deliberately does **not** predict "this task will cost 8%". Task-size forecasts are too dependent on unknown repo complexity, debugging branches, model behavior, cache effects, and provider accounting.
 
 Instead, the dashboard derives a **runway from observed quota movement**:
 
@@ -106,7 +106,7 @@ The dashboard focuses on `CURRENT`, `FLOOR`, `LANDING RESERVE`, `SAFE HEADROOM`,
 
 ## Dynamic landing reserve
 
-Before there is enough history, the default reserve is 4 percentage points. As quota snapshots arrive, Agent Landing records the observed decrease between snapshots and estimates:
+Before there is enough history, the default reserve is 4 percentage points. As quota snapshots arrive, Quota Floor records the observed decrease between snapshots and estimates:
 
 ```text
 reserve = clamp(
@@ -143,7 +143,7 @@ one went. The handoff must include:
 7. exact next steps;
 8. a resume prompt.
 
-If quota reaches the emergency margin, Agent Landing writes a lower-fidelity but deterministic handoff from local task metadata (and Git state, when the folder is a repository) without another model call. It is saved to the same directory.
+If quota reaches the emergency margin, Quota Floor writes a lower-fidelity but deterministic handoff from local task metadata (and Git state, when the folder is a repository) without another model call. It is saved to the same directory.
 
 ## Design principles
 

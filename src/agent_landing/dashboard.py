@@ -41,7 +41,7 @@ DASHBOARD_HTML = r'''<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Agent Landing</title>
+<title>Quota Floor</title>
 <style>
 :root { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 body { margin: 0; background: #0b0d10; color: #f2f4f7; }
@@ -66,7 +66,7 @@ h1 { margin:0; font-size:28px; letter-spacing:-.03em; }
 </style>
 </head>
 <body><main>
-<header><div><h1>Agent Landing</h1><div class="sub">Per-task quota budget + graceful handoff</div></div><div id="state" class="badge">loading</div></header>
+<header><div><h1>Quota Floor</h1><div class="sub">Per-task quota budget + graceful handoff</div></div><div id="state" class="badge">loading</div></header>
 <div class="grid">
   <section class="card"><div class="label">Current</div><div id="current" class="value">—</div></section>
   <section class="card"><div class="label">Floor</div><div id="floorValue" class="value">—</div></section>
@@ -136,7 +136,7 @@ def serve_dashboard(store: StateStore, host: str = "127.0.0.1", port: int = 8765
             return
 
     server = ThreadingHTTPServer((host, port), Handler)
-    print(f"Agent Landing dashboard: http://{host}:{port}")
+    print(f"Quota Floor dashboard: http://{host}:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

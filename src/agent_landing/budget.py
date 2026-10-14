@@ -116,7 +116,7 @@ def start_budget(
         available = ", ".join(w.id for w in snapshot.windows) or "none"
         raise BudgetRefused(
             f"Quota window {window!r} unavailable; available: {available}. "
-            "Omit the window to let Agent Landing pick the longest one your plan exposes."
+            "Omit the window to let Quota Floor pick the longest one your plan exposes."
         )
     remaining = chosen.remaining_percent
 

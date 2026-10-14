@@ -1,8 +1,8 @@
-# Agent Landing
+# Quota Floor
 
 [English](README.md) | **简体中文**
 
-**告诉 Claude Code 或 Codex：订阅额度至少要给你留多少。额度快降到这条线时，Landing 会拦住后续的修改，让 agent 写好交接说明后停下。**
+**告诉 Claude Code 或 Codex：订阅额度至少要给你留多少。额度快降到这条线时，它的 `landing` 守卫会拦住后续的修改，让 agent 写好交接说明后停下。**
 
 ```text
 /landing leave 70 修测试
@@ -16,7 +16,7 @@
 ## 安装
 
 ```bash
-pipx install git+https://github.com/zhixun123/landing
+pipx install git+https://github.com/Wise-Zhi/quota-floor
 landing install
 landing doctor
 ```

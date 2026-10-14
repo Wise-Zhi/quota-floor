@@ -3,7 +3,7 @@
 Verified against **codex-cli 0.149.0-alpha.4.3**, and re-verified unchanged on
 **0.150.0-alpha.8**, both on Windows 11. Hooks are a stable, default-on feature
 there (`codex features list` shows `hooks stable true`), and the payload format
-matches Claude Code's closely enough that Agent Landing's hook handlers work
+matches Claude Code's closely enough that Quota Floor's hook handlers work
 unchanged.
 
 Across that version bump the `pre-tool-use` input and output schemas were
@@ -13,7 +13,7 @@ input still supplies `tool_name`/`tool_input`.
 
 ## Composer discovery
 
-The **Agent Landing** row shown while searching in the Codex composer is an
+The **Quota Floor** row shown while searching in the Codex composer is an
 autocomplete candidate, not a persistent argument hint. On the verified build,
 pressing Space while the row is visible dismisses it without selecting the
 skill. Select the candidate first; the configured editable starter is
@@ -135,14 +135,14 @@ Force `LAND` with a floor just above current quota, which costs nothing:
 landing invoke "leave 5h 90 -- wiring check" --provider codex
 ```
 
-Feed a synthetic payload straight to the hook to confirm Agent Landing's side
+Feed a synthetic payload straight to the hook to confirm Quota Floor's side
 before involving the model at all:
 
 ```bash
 echo '{"hook_event_name":"PreToolUse","tool_name":"apply_patch","tool_input":{"file_path":"src/x.py"},"tool_use_id":"t","session_id":"s","cwd":".","model":"m","permission_mode":"default","transcript_path":null,"turn_id":"u"}' | landing hook-pre-tool --platform codex
 ```
 
-Expected in `LAND`. These exercise Agent Landing's own logic, not the host, so
+Expected in `LAND`. These exercise Quota Floor's own logic, not the host, so
 they do not move with the Codex version:
 
 | Tool call | Decision |
@@ -157,7 +157,7 @@ they do not move with the Codex version:
 needs one real turn. Run it, then record which of these you saw:
 
 - **(a) host-side gap** — the hook returned `deny` but the tool ran anyway.
-- **(b) Agent Landing gap** — the hook did not return `deny` in the first place.
+- **(b) Quota Floor gap** — the hook did not return `deny` in the first place.
 
 The command above distinguishes them: if it prints `deny` and Codex still runs
 the tool, it is (a). Record the exact `codex --version` either way, because hook
@@ -188,7 +188,7 @@ hardcoding a hash.
 ## Quota polarity
 
 Codex reports `usedPercent` (consumed), Claude Code reports `used_percentage`.
-Agent Landing decides polarity from the field name only, never from the value —
+Quota Floor decides polarity from the field name only, never from the value —
 `30` is identical whether it means 30% spent or 30% left. A payload whose
 polarity cannot be established is recorded as unreadable, which forces
 `CONSERVE`, rather than being guessed at.

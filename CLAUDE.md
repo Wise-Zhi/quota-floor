@@ -1,6 +1,6 @@
 # Claude Code Review / Test Instructions
 
-You are reviewing **Agent Landing**, an alpha quota-budget guard for Claude Code and Codex.
+You are reviewing **Quota Floor**, an alpha quota-budget guard for Claude Code and Codex.
 
 Read these first:
 
@@ -32,7 +32,7 @@ When asked to test or review this repository:
 2. Prioritize state-machine correctness, early completion, LAND tool gating, emergency fallback, quota parsing, persistence, and runway isolation.
 3. Add regression tests before or with fixes.
 4. Prefer simulated/manual quota. Do not waste real account quota solely to hit a threshold.
-5. For real Claude/Codex integration, record host version and distinguish a host hook bug from an Agent Landing policy bug.
+5. For real Claude/Codex integration, record host version and distinguish a host hook bug from an Quota Floor policy bug.
 6. Do not weaken the user's floor to make a test pass.
 7. Do not replace unknown quota with 100%.
 
@@ -40,7 +40,7 @@ When asked to test or review this repository:
 
 - Claude statusLine may not expose every model-scoped quota limit.
 - Codex hook denial behavior may vary by host build; verify actual enforcement instead of assuming it.
-- Codex's Agent Landing row is an autocomplete candidate, not a persistent argument hint. On `0.149.0-alpha.4.3`, Space dismisses an unselected row; select the skill before typing arguments.
+- Codex's Quota Floor row is an autocomplete candidate, not a persistent argument hint. On `0.149.0-alpha.4.3`, Space dismisses an unselected row; select the skill before typing arguments.
 - Runway is wall-clock burn telemetry, not a promise about task completion time or task cost.
 
 ## Useful commands

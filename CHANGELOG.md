@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Agent Landing are recorded here.
+All notable changes to Quota Floor are recorded here.
 
 ## [Unreleased]
 

@@ -29,7 +29,7 @@ body:
   - type: input
     id: landing-version
     attributes:
-      label: Agent Landing version and OS
+      label: Quota Floor version and OS
       placeholder: "0.1.0a1, Windows 11"
     validations:
       required: true

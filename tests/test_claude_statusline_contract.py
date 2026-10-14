@@ -1,7 +1,7 @@
 """Pins the parser to Claude Code's documented statusLine payload.
 
 The payload below is the example from the official statusLine documentation,
-reproduced verbatim. It is the one external contract Agent Landing depends on for
+reproduced verbatim. It is the one external contract Quota Floor depends on for
 Claude quota, so a change on either side should fail here loudly rather than show
 up as a guard that quietly stops guarding.
 

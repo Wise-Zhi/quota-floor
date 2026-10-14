@@ -3,7 +3,7 @@
 Captured 2026-08-25 from codex-cli 0.149.0-alpha.4.3 (Codex Desktop, Windows
 11 build 26200) on a **Plus** account, reproduced verbatim apart from the
 redacted credit id. Re-captured on 0.150.0-alpha.8: same keys, same polarity,
-same units -- only the numbers moved. It is the one external contract Agent Landing depends on
+same units -- only the numbers moved. It is the one external contract Quota Floor depends on
 for Codex quota, so a change on either side should fail here loudly rather than
 show up as a guard that quietly stops guarding.
 

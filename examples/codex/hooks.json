@@ -1,5 +1,5 @@
 {
-  "description": "Agent Landing quota guard",
+  "description": "Quota Floor guard",
   "hooks": {
     "PreToolUse": [
       {

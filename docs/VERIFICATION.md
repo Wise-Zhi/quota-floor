@@ -49,7 +49,7 @@ never treated as 100% available.
 
 ## Codex
 
-Codex exposes ChatGPT quota through the app-server method `account/rateLimits/read`. Agent Landing queries this runtime RPC directly; quota math does not require a model turn. The Codex hook refreshes a stale quota snapshot before evaluating a tool call.
+Codex exposes ChatGPT quota through the app-server method `account/rateLimits/read`. Quota Floor queries this runtime RPC directly; quota math does not require a model turn. The Codex hook refreshes a stale quota snapshot before evaluating a tool call.
 
 ### Enforcement boundary
 
