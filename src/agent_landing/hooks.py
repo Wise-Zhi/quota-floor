@@ -399,7 +399,152 @@ COMPLETED_REASON = (
 )
 
 
+#: A Landing subcommand that opens or ends a budget, wherever it sits in a
+#: command line. Requires whitespace after the program name, so a path such as
+#: `docs/landing-start.md` is not a call.
+_LANDING_SUBCOMMAND = re.compile(
+    r"(?:\blanding(?:\.exe)?|\bagent-landing(?:\.exe)?|\bagent_landing\.cli)[\"']?\s+"
+    r"(invoke|start|complete)\b",
+    re.IGNORECASE,
+)
+
+
+def _shell_command(payload: dict[str, Any]) -> str | None:
+    if _tool_name(payload) not in {"Bash", "shell", "exec_command"}:
+        return None
+    tool_input = _tool_input(payload)
+    return str(tool_input.get("command") or tool_input.get("cmd") or "")
+
+
+def _bare_invoke_arguments(command: str) -> tuple[str, str | None] | None:
+    """`(message, provider)` when the command is exactly one `landing invoke`.
+
+    The command is never run -- the gate answers it -- so only its words
+    matter, not how a shell would expand them. Anything chained to it makes it
+    not bare.
+    """
+    text = command.strip()
+    if text.startswith("&"):
+        text = text[1:].strip()  # PowerShell's call operator
+    try:
+        lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    if not tokens or any(set(token) <= set(";&|<>()") for token in tokens):
+        return None
+    program = tokens[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
+    if program.endswith(("landing", "landing.exe")):
+        rest = tokens[1:]
+    elif program.startswith("python") and tokens[1:3] == ["-m", "agent_landing.cli"]:
+        rest = tokens[3:]
+    else:
+        return None
+    if not rest or rest[0].lower() != "invoke":
+        return None
+    message, provider, args = "", None, rest[1:]
+    index = 0
+    while index < len(args):
+        if args[index] == "--provider" and index + 1 < len(args):
+            provider = args[index + 1]
+            index += 2
+            continue
+        if not args[index].startswith("--") and not message:
+            message = args[index]
+        index += 1
+    return message, provider
+
+
+def _agent_landing_command(payload: dict[str, Any], store: StateStore) -> dict[str, Any] | None:
+    """Answer an agent's own `landing invoke`/`start`/`complete`, or None.
+
+    A terminal command has no conversation, so letting one run opened or ended
+    the *default* budget, which no chat's gate consults. Observed in ChatGPT
+    Work mode: the hook missed a wrapped prompt, the agent ran `landing invoke`
+    itself, and the task then ran unenforced. So these are never run: a bare
+    `invoke` opens this conversation's budget here, and every other shape is
+    denied, whether or not a budget exists yet.
+    """
+    command = _shell_command(payload)
+    match = _LANDING_SUBCOMMAND.search(command or "")
+    if not match:
+        return None
+    subcommand = match.group(1).lower()
+    session = store.load_session()
+    active = session is not None and not session.is_inactive
+
+    if subcommand == "complete":
+        if not is_complete_command(payload):
+            if active:
+                return None  # a release attempt; the gate's release check answers it
+            return hook_json(decision="deny", reason=(
+                "Run `landing complete` on its own, with nothing chained to it."
+            ))
+        if not active:
+            return hook_json(decision="deny", reason=(
+                "Quota guard: there is no active quota budget in this conversation, so there "
+                "is nothing to complete. Finish your reply and stop."
+            ))
+        return None  # the gate's own completion handling takes it from here
+
+    if subcommand == "start":
+        if active:
+            return None  # a release attempt; the gate's release check answers it
+        return hook_json(decision="deny", reason=(
+            "Quota budgets are opened from the chat, not by an agent's tool call. If the user "
+            "asked for one, run `landing invoke \"<their whole message>\"` on its own instead."
+        ))
+
+    bare = _bare_invoke_arguments(command or "")
+    if bare is None:
+        return hook_json(decision="deny", reason=(
+            "Run `landing invoke \"<the user's message>\"` on its own, with nothing chained to "
+            "it; the guard opens this conversation's budget itself."
+        ))
+    message, provider = bare
+    found = extract_invocation(message)
+    parsed = parse_invocation(found[0] if found else message)
+    if not parsed.ok:
+        return hook_json(decision="deny", reason=parsed.message())
+    if parsed.action == "cancel":
+        return hook_json(decision="deny", reason=(
+            "Ending a quota budget is the user's to do, not the agent's. Ask them to send "
+            "`/landing cancel` (Codex: `$landing cancel`) as a whole message."
+        ))
+    snapshot = store.load_snapshot()
+    if snapshot is None:
+        return hook_json(decision="deny", reason=(
+            "Could not start a quota budget: no quota reading is available yet. Tell the user."
+        ))
+    try:
+        result = start_budget(
+            store,
+            snapshot,
+            provider=provider or snapshot.provider,
+            task=parsed.task,
+            window=parsed.window,
+            preserve=parsed.percent if parsed.means_leave else None,
+            max_spend=None if parsed.means_leave else parsed.percent,
+            cwd=payload.get("cwd") or os.getcwd(),
+            # A tool call is the agent's channel: tightening is fine, lowering
+            # a floor the user set is not.
+            authorized_by_user=False,
+        )
+    except BudgetRefused as refusal:
+        return hook_json(decision="deny", reason=f"Could not start a quota budget: {refusal}")
+    return hook_json(decision="deny", reason=(
+        f"Quota guard: budget opened for this conversation -- {result['interpretation']} "
+        "The guard handled the command itself, so it did not need to run; this is the expected "
+        "response, not an error. Do not run any landing command again; carry on with the task."
+    ))
+
+
 def _pre_tool_locked(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
+    handled = _agent_landing_command(payload, store)
+    if handled is not None:
+        return handled
+
     # Deliberately does NOT renew a completed segment: a tool call cannot prove a
     # new user instruction, so renewing here would let the agent work straight
     # past `landing complete` and spend the budget it was told to return.
