@@ -382,6 +382,34 @@ _CANCEL_WRAPPERS = ("```", "`", '"', "'", "“”", "「」")
 _CANCEL_TRAILING = ".。!！"
 
 
+#: Context a host prepends to the user's words before any hook sees them. The
+#: ChatGPT desktop app (Codex, `codex_work_desktop`) sends every prompt as an
+#: `<in-app-browser-context source="ambient-ui-state">` block, then
+#: `## My request:`, then what the user typed (observed 2026-10-15, cli
+#: 0.162.0-alpha.17.2). Left in place it pushed `$landing ...` mid-message, where
+#: it reads as prose and is ignored: the task ran unguarded, and `$landing
+#: cancel` would have been ignored too. Only blocks the host itself marks as
+#: ambient are removed; a tag the user typed stays the user's text.
+_AMBIENT_BLOCK = re.compile(
+    r"^\s*<([\w-]+)\b[^>]*\bsource=\"ambient-ui-state\"[^>]*>.*?</\1>\s*", re.DOTALL
+)
+_REQUEST_HEADING = re.compile(r"^\s*#+\s*My request:\s*", re.IGNORECASE)
+
+
+def strip_host_context(prompt: str) -> str:
+    text = prompt or ""
+    stripped = False
+    while True:
+        match = _AMBIENT_BLOCK.match(text)
+        if not match:
+            break
+        text = text[match.end():]
+        stripped = True
+    if stripped:
+        text = _REQUEST_HEADING.sub("", text, count=1)
+    return text
+
+
 def undecorate(prompt: str) -> str:
     """Strip formatting a user cannot help pasting, keeping the message whole.
 
@@ -396,7 +424,7 @@ def undecorate(prompt: str) -> str:
     other words and is still not a cancel. A trailing `?` is deliberately not
     stripped, so a question stays a question.
     """
-    text = " ".join((prompt or "").split())
+    text = " ".join(strip_host_context(prompt).split())
     changed = True
     while changed:
         changed = False
