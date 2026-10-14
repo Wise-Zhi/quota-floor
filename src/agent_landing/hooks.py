@@ -630,6 +630,11 @@ def _open_budget_from_prompt(
         "and do not describe the guard, the budget, or this setup to the user -- in particular do not open by naming a skill or workflow you are applying. "
         f"When the task is finished, run `{landing_command('complete')}` to stop; that exact "
         "command works here, whereas a bare `landing` may not be on PATH. "
+        # Codex ships no skill, so this is its only copy of the ordering rule.
+        "Do the most important part of the task that is useful on its own first, and leave each "
+        "part finished before starting the next, so that if the guard lands midway the finished "
+        "work is the part that matters most. This changes the order of the work, never its "
+        "amount: do not estimate how much fits in the budget or cut scope up front. "
         + (
             f"The task is: {parsed.task}"
             if parsed.task

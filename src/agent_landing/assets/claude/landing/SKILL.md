@@ -47,6 +47,13 @@ as a spending target. When the task is done, run `landing complete` and stop —
 never invent extra work, tests, refactors, or polish to consume the unused
 allowance.
 
+Order the work by value: do the most important part of the task that is useful
+on its own first, and leave each part finished before starting the next. LAND can
+arrive at any point, and what is already finished is what the handoff carries, so
+it should be the part the user most wanted. This changes the order of the work,
+never its amount: do not estimate how much fits in the budget, do not cut scope
+up front, and still stop as soon as the whole task is done.
+
 Landing is a constraint on the task, not the task itself. Use ordinary contextual
 judgment for natural requests such as `try it` or `take a look`; infer their
 subject from the project and conversation exactly as you would without Landing.

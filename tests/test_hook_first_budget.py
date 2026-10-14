@@ -287,3 +287,25 @@ def test_an_interpreter_path_with_spaces_is_quoted(monkeypatch):
 
     monkeypatch.setattr(sys, "executable", "C:/Program Files/py/python.exe")
     assert landing_command("complete").startswith('"C:/Program Files/py/python.exe"')
+
+
+SKILL = Path(__file__).resolve().parents[1] / "src" / "agent_landing" / "assets" / "claude" / "landing" / "SKILL.md"
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_the_model_is_told_to_do_the_most_valuable_part_first(tmp_path, provider):
+    """LAND can interrupt at any point, so the finished part should be the best part.
+
+    Codex ships no skill, so the hook is its only copy. The rule changes the order
+    of the work, never its amount: an agent told to estimate what fits would treat
+    the floor as a spending target or trim the task before any quota had moved.
+    """
+    store = seed(tmp_path, provider=provider)
+    marker = "$landing" if provider == "codex" else "/landing"
+    context = context_of(submit(store, f"{marker} leave 70 fix the tests", provider=provider))
+    skill = SKILL.read_text(encoding="utf-8")
+
+    for text in (context, " ".join(skill.split())):
+        assert "most important part of the task that is useful on its own first" in text
+        assert "never its amount" in text
+        assert "do not estimate how much fits in the budget" in text
