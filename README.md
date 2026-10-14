@@ -1,464 +1,186 @@
 # Agent Landing
 
-**Give a coding agent a task and a quota budget. It works inside that budget, reserves enough quota to land, writes a resumable technical handoff, and stops.**
-
-> Alpha MVP: Claude Code + OpenAI Codex.
-
-**Verification status, honestly.** Codex has one fully proven Windows path;
-Claude Code is still complete only on surfaces where its status line runs:
->
-> | | Reads real quota | Enforces the floor |
-> | --- | --- | --- |
-> | **Claude Code** | only where the status line runs — see below | **verified** 2026-08-27: a blocked write did not run |
-> | **Codex** | **verified** on codex-cli 0.150.0-alpha.12.2 | **verified** 2026-08-29 on Windows: implementation patches were denied in LAND |
->
-> The handoff is now the agent's final reply, saved by a `Stop` hook outside
-> your folder. That path is covered by tests but **not yet verified live** on
-> either host.
->
-> Everything degrades safe rather than silently: unknown quota conserves, it is
-> never read as 100%. Host enforcement remains version-specific; rerun the
-> integration check when upgrading Codex rather than assuming another build has
-> the same deny behavior.
-
-## Why
-
-Coding agents know how to keep working until a task is done. They are much worse at preserving *account quota* for the next task. A fixed "stop at 5%" threshold is also wrong: writing tests, inspecting the diff, and producing a useful handoff consumes quota too.
-
-Agent Landing treats the last part of the budget as a **landing reserve**. A requested percentage is a **floor, never a spending target**: if the task finishes with 91% remaining even though the user asked to preserve 75%, Agent Landing stops at 91%. It never invents extra work to consume the allowance.
+**Tell Claude Code or Codex how much of your subscription quota to leave untouched. When quota gets close to that floor, Landing blocks further edits, and the agent writes a handoff and stops.**
 
 ```text
-current remaining quota
-        -
-user's required final floor
-        -
-dynamic landing reserve
-        =
-safe development headroom
+/landing leave 70 fix the tests
 ```
 
-Example: the user says **"implement OAuth, but leave me 70% weekly quota."** If the current session's recent burn rate implies a 4% landing reserve, implementation stops around 74%, not at 70%. The remaining budget is used only to preserve state and write the handoff.
+That gives the agent one task and a floor: at least 70% of your quota must remain
+when it stops. Landing reads your real quota outside the model, keeps a small
+reserve so the agent has room to write the handoff, and blocks every write once
+it hits that reserve. If the task finishes at 91%, it stops at 91%. **The floor is a limit, never a spending target.**
 
-## Where users actually use it
+> **Alpha.** Windows is the only platform verified on real hosts, and only on the host builds listed under
+> [Verification status](#verification-status). The new final-reply handoff
+> is covered by tests but **not yet verified live** on either host.
 
-Landing should feel native to the coding agent. There is no required standalone app. The primary entrypoint is simply **`landing`**:
-
-```text
-Claude Code:  /landing leave 70 refactor auth and add tests
-Codex:        $landing leave 70 refactor auth and add tests
-Terminal:      landing status
-```
-
-Claude Code shows the expected format directly in slash-command autocomplete:
-
-```text
-/landing leave|spend <percent> [task]
-```
-
-Codex has no such autocomplete, because Landing installs no Codex skill -- see
-below for why. Type the invocation as ordinary text; the hook reads the whole
-message, so task words on either side of it are kept.
-
-- `leave 70` stops while at least 70% **remains**; `spend 15` spends at most 15
-  percentage points. One of the two keywords is **required**: a bare number is
-  refused, so that a dropped keyword can never silently mean the opposite.
-- The task is **optional**. `/landing spend 20` on its own puts a floor under the
-  work already under way, so a budget can be added after the task was given
-  rather than having to be restated with it.
-- `weekly` or `5h` **scopes** the floor to one window. Omit it and the floor
-  guards every window your plan exposes, stopping at whichever reaches it first.
-- `--` is optional; the first word that is not a keyword, window, or number
-  starts the task.
-- Plain phrasing around the settings is read too: `/landing leave me 70% quota`,
-  `/landing spend at most 15% on this`. A qualifier that contradicts the keyword
-  (`leave at most 30`) is refused rather than guessed.
-- Chinese keywords follow the same rules: `留`/`保留` mean `leave`, `花`/`用`
-  mean `spend` -- `/landing 留 70 修测试`, `/landing 最多花20%`.
-- The settings may come **before or after** the task, whichever reads more
-  naturally: `leave 70 fix the tests` and `fix the tests leave 70` are the
-  same request. A trailing group is only recognized when it is complete (a
-  keyword plus a number), so a number or the word `leave` occurring inside the
-  task text is never mistaken for settings.
-
-For example: `/landing leave 75 fix the checkout tests`.
-
-Invocations are parsed in code, not by the model, so both hosts agree and a typo
-is refused instead of silently starting an unguarded task. On both hosts the
-`UserPromptSubmit` hook does the parsing and opens the budget before the model is
-given the turn.
-
-Users interact with it in three places:
-
-1. **Inside the existing Claude Code or Codex conversation** — invoke `/landing` in Claude Code or `$landing` in Codex. Natural-language budget requests can still be supported, but the explicit command is the discoverable default.
-2. **In the terminal statusline** — keep a small always-visible budget indicator such as `AL | W 84->70% | safe +11% | SAFE`.
-3. **On demand in the same terminal** — run `landing status` for details or `landing status --compact` for the one-line view.
-
-The local web dashboard is optional diagnostics/history only. It should never be required for normal use and should not pop up automatically.
-
-The installer prints this once after setup:
-
-```text
-Landing is ready.
-Use it where you already work:
-  Claude Code:  /landing leave 70 [task]
-  Codex:        $landing leave 70 [task]
-  Quick check:  landing status --compact
-  Full status:  landing status
-```
-
-## User-facing budget syntax
-
-Two equivalent budget modes are supported:
+## Install
 
 ```bash
-# Leave at least 70% after the task lands
-landing start \
-  --provider claude \
-  --window auto \
-  --leave 70 \
-  --task "Implement OAuth refresh"
-
-# Spend at most 15 percentage points from the current quota
-landing start \
-  --provider codex \
-  --window auto \
-  --spend 15 \
-  --task "Refactor the authentication layer"
-```
-
-The intended AI UX is explicit and short: use `/landing` in Claude Code or `$landing` in Codex.
-
-### Codex gets no skill, on purpose
-
-The `UserPromptSubmit` hook parses the invocation and opens the budget before the
-model is given the turn, so nothing about a budget needs the model's cooperation.
-Landing therefore installs **no Codex skill**. An invocation is simply text in the
-message, which the hook reads.
-
-That is not a limitation, it is the fix. Codex names the skills it has loaded at
-the start of a turn, so merely *being* a skill made every budgeted task open with
-`I'm using the requested Landing workflow …` instead of the work. Measured on
-2026-08-28, same task and prompt run twice with only the skill's presence
-differing: with the skill, Landing led the first sentence; without it, Landing did
-not appear in the transcript at all, while the budget still opened and the task
-still completed. No wording inside a skill can stop a model from mentioning that
-the skill exists.
-
-The cost is discoverability: Codex cannot autocomplete a skill that is not there.
-Claude Code keeps its skill, because its slash command is how `/landing` is
-offered in the first place.
-
-## States
-
-- **NORMAL** — work normally.
-- **CONSERVE** — quota is getting close; finish the bounded objective and avoid new workstreams.
-- **LAND** — block every write, permit minimal read-only inspection, and have the agent write the handoff as its final reply; a `Stop` hook saves it to `~/.landing/handoffs/` and the task stops. Nothing is written into your folder.
-- **EMERGENCY** — write a deterministic handoff locally without spending another model turn, then block tools.
-- **STOPPED** — the budgeted task is over until a new budget is explicitly started.
-
-## Completion invariant
-
-The strongest rule in the project is:
-
-> **A quota floor is a limit, never a target.**
-
-As soon as the task's acceptance criteria are satisfied, the agent runs `landing complete`. The session becomes `STOPPED` immediately, even if a large amount of the budget was unused. The remaining allowance is returned to the user; it is never treated as quota that should be spent.
-
-### The budget belongs to one task
-
-When the requested task completes, `landing complete` freezes the rest of that
-agent turn. The next real user instruction releases the finished contract instead
-of renewing it, so another task or chat does not inherit the floor. A new Landing
-command starts a fresh task budget, while account-level quota snapshots and
-measured burn history remain shared so reserve estimates do not reset.
-
-To end an active budget early, send `/landing cancel` (Codex: `$landing cancel`) as a whole message. The guard stands down, and the session is kept on disk so its burn history remains useful to the next budget.
-
-It has to be sent as an instruction rather than run as a command, because the gate denies the agent its own cancel — an agent must never lift its own floor. The `UserPromptSubmit` hook is the one channel an agent cannot manufacture, so that is where a cancel is honoured. A phrasing that only *resembles* a cancel ("forget the budget") is answered with a pointer to the exact command and changes nothing: guessing here would unguard a user who still believes they are covered.
-
-## Quota windows and plans
-
-A plan can expose several windows at once. A Codex Plus account reports both a five-hour and a weekly window; Claude Code reports `five_hour` and `seven_day`, either of which may be absent. Users should not have to know which windows they have, so **the floor applies to all of them** and work stops at whichever one reaches it first.
-
-Naming a window scopes the floor to that one instead. That is the escape hatch for "I know the five-hour window is low, budget me against the weekly one" — and it is the only thing the optional `weekly`/`5h` token does.
-
-**Landing feasibility is checked on every window regardless**, scoped or not. Being able to write a handoff is a safety property, not a preference: once any window is exhausted the handoff cannot be written, however healthy the budget looks.
-
-Why the floor is not simply pinned to the longest window: it used to be, on the assumption that a five-hour window is a rate limit that refills after a nap while a weekly window is the real budget. A live Codex Plus payload disproved the premise the design rested on — Plus reports *both* windows. With `leave 70` pinned to the weekly window, the five-hour window burned from 94% to 3% remaining while the guard stayed in NORMAL, because 70% of a week is not reachable inside one session. The floor never bound; only the landing reserve eventually did.
-
-If the window a session was scoped to disappears — a plan change, or a host that stops reporting it — the budget migrates to the longest window still available. A window that is *present but unreadable* is not treated as missing: migrating there would move the floor onto a roomier window and report the result as a known quota, so the guard reports unknown quota and conserves instead.
-
-## Trusting the quota reading
-
-Used and remaining are the same number: `30` is identical whether it means 30% spent or 30% left. Polarity is therefore decided by the **field name** and never inferred from the value. A payload whose polarity cannot be established is reported as unreadable rather than guessed.
-
-Unreadable windows are named in `landing status` and the statusline instead of vanishing, because a window that disappears without explanation is also a window that is silently unguarded. When no window can be read at all, the state becomes `CONSERVE` with `QUOTA UNKNOWN` — never `NORMAL`. A reading older than `--max-snapshot-age-seconds` (default 15 minutes) is likewise not treated as current headroom, and is displayed with its age rather than as a live number.
-
-## Burn-rate runway (not task-cost prediction)
-
-Agent Landing deliberately does **not** predict "this task will cost 8%". Task-size forecasts are too dependent on unknown repo complexity, debugging branches, model behavior, cache effects, and provider accounting.
-
-Instead, the dashboard derives a **runway from observed quota movement**:
-
-```text
-safe development headroom
-        /
-observed quota burn rate
-        =
-approximate runway
-```
-
-For example, if 13 percentage points remain available for development and recent observed burn is about 3% per wall-clock hour, the dashboard may show roughly 4.3 hours of recent-pace runway. It also shows a typical rate and a heavy-use (p90) rate.
-
-This estimate is intentionally advisory. It never changes the hard quota floor. If there are not enough real quota-movement samples, the UI says **Learning** rather than inventing a task-cost estimate. Quota resets/increases, duplicate timestamps, and very long idle gaps are excluded from the burn-rate calculation.
-
-```bash
-landing status
-landing dashboard
-# open http://127.0.0.1:8765
-```
-
-The dashboard focuses on `CURRENT`, `FLOOR`, `LANDING RESERVE`, `SAFE HEADROOM`, observed burn rate, and runway.
-
-## Dynamic landing reserve
-
-Before there is enough history, the default reserve is 4 percentage points. As quota snapshots arrive, Agent Landing records the observed decrease between snapshots and estimates:
-
-```text
-reserve = clamp(
-  p90(recent positive per-tool-call burn) * landing_tool_calls * safety_factor,
-  min_reserve,
-  max_reserve
-)
-```
-
-Defaults:
-
-- minimum reserve: 3%
-- initial/default reserve: 4%
-- maximum reserve: 15%
-- landing tool calls: 8
-- safety factor: 1.5
-- conserve warning: 5% before the landing boundary
-
-The calculation is local Python. It does **not** invoke an AI model.
-
-## Claude Code
-
-Claude Code's status-line payload exposes the base `five_hour` and `seven_day` usage windows. Configure `landing claude-statusline` so the runtime quota is persisted locally, then use the hooks (`PreToolUse` gate, `UserPromptSubmit`, `Stop`).
-
-See [`examples/claude/settings.json`](examples/claude/settings.json).
-
-### The status line is the only Claude quota source, and it does not run everywhere
-
-Claude Code reports `rate_limits` to the status line and nowhere else, so that
-one command is the entire Claude quota path. **Some Claude Code surfaces never
-invoke it.** Verified on Windows on 2026-08-27: the `PreToolUse`, `PostToolUse`
-and `UserPromptSubmit` hooks all ran normally for a whole session while the
-configured `statusLine` command was never called once.
-
-Where that happens the enforcement half still works — the gate blocks writes,
-and it was verified doing so on the same session — but it has no quota to
-enforce against. The guard reports `QUOTA UNKNOWN`, stays in `CONSERVE`, and
-never fabricates headroom, so it fails safe. It cannot hold a floor.
-
-Practically: **Landing's Claude support is only complete in the terminal CLI.**
-Run `landing doctor` and read the `quota_source` line. `pending` after a session
-of normal work means this is the situation you are in.
-
-Two further limits on the same path: `rate_limits` appears only for Claude.ai
-subscriptions and only after the first API response of a session, so API-key
-users cannot be guarded at all; and model-scoped weekly limits visible in
-`/usage` are not always projected into the status line. An unknown limit is
-never treated as 100% available.
-
-## Codex
-
-Codex exposes ChatGPT quota through the stable app-server method `account/rateLimits/read`. Agent Landing queries this runtime RPC directly; quota math does not require a model turn.
-
-See [`examples/codex/config.toml`](examples/codex/config.toml).
-
-The Codex hook refreshes a stale quota snapshot before evaluating a tool call. Current Codex hook support is still evolving across CLI/Desktop builds, so v0.1 targets the documented/implemented hook schema and treats runtime hook regressions as a platform limitation rather than fabricating quota state.
-
-## Install once for every project
-
-Install Landing into a persistent Python environment, then let it merge the
-user-level configuration for both hosts:
-
-```bash
-# From a downloaded or cloned checkout. pipx keeps the runtime independent of
-# this repository, so the hooks do not break if the checkout is moved later.
-pipx install .
+pipx install agent-landing
 landing install
 landing doctor
 ```
 
-Once published, the same environment can be created from PyPI instead of a
-checkout:
+Until the PyPI release exists, run `pipx install .` from a clone instead of the first line.
+`landing install` configures Claude Code and Codex for your user account, not
+for one project. It keeps your existing settings, and `landing uninstall`
+reverses it. Details: [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
-```bash
-pipx install agent-landing
+## Why
+
+A coding agent keeps working until the task is done, even when the rest of your
+week's quota goes with it. The guards that exist today don't fit a subscription:
+
+- **Claude Code's `--max-budget-usd`** caps API dollars. A Claude.ai
+  subscription is measured in percent of a five-hour and a weekly window, not
+  in dollars.
+- **Exhaustion blockers** stop work only when a window reaches 0%. By then
+  there is no quota left to write down what was done.
+- **Usage viewers** show the numbers and enforce nothing.
+
+Landing lets you choose the floor, reserves quota so the agent can stop
+cleanly above it, and never treats unknown quota as full. Full comparison: [docs/COMPARISON.md](docs/COMPARISON.md).
+
+## What happens
+
+```text
+you:      /landing leave 70 fix the tests
+landing:  budget opened -- floor 70% on every window, reserve 4%
+agent:    ...works normally (NORMAL), then carefully (CONSERVE)...
+landing:  quota reaches 74% (70% floor + 4% reserve) -> LAND
+agent:    tries to edit src/app.py
+landing:  denied: "Quota budget boundary reached. Editing is blocked;
+          write the technical handoff as your final reply, then stop."
+agent:    final reply = handoff (done, changed, tested, next steps, resume prompt)
+landing:  saved to ~/.landing/handoffs/<time>-fix-the-tests.md
 ```
 
-The distribution is `agent-landing`; the command it installs is `landing`.
+Writes are denied in LAND. Read-only inspection is still allowed, so the
+handoff is accurate. Nothing is written into your project folder.
 
-`landing install` is also the update command: run it again after upgrading the
-package. The installed skill is a *rendered* copy — absolute interpreter paths
-are substituted in — so a package upgrade leaves the old one in place. Skipping
-this does not weaken enforcement, which lives in the hooks, but it can silently
-lose plain-language triggering: a phrase like "leave me 70%" then arms nothing
-while the user believes it did. `landing doctor` reports a stale copy and names
-the command that fixes it.
+A scripted, zero-quota walkthrough of this flow is in [docs/DEMO.md](docs/DEMO.md).
 
-It installs the skill and hooks at user scope, so no copying is needed inside
-each repository:
+## Usage
 
-| Host | Persistent skill | Persistent configuration |
+| Host | Type this |
+| --- | --- |
+| Claude Code | `/landing leave 70 fix the tests` |
+| Codex | `$landing leave 70 fix the tests` |
+| Terminal | `landing status`, `landing status --compact` |
+
+- `leave 70` stops while at least 70% **remains**. `spend 15` spends at most
+  15 percentage points. One of the two keywords is required. A bare number is
+  refused, so a dropped keyword can never be read as the opposite request.
+- The task is optional. `/landing spend 20` on its own puts a floor under the
+  work already in progress.
+- The floor applies to **every** quota window your plan reports (five-hour and
+  weekly) and triggers on whichever window reaches it first. Add `weekly` or
+  `5h` to guard only that window, e.g. `/landing leave weekly 70 fix the tests`.
+- Plain phrasing works too: `/landing leave me 70% quota`,
+  `/landing spend at most 15% on this`, `/landing 留 70 修测试`. A qualifier
+  that contradicts the keyword (`leave at most 30`) is refused, not guessed.
+- Settings may come before or after the task: `fix the tests leave 70` is the
+  same request.
+- `/landing cancel` (Codex: `$landing cancel`), sent as the whole message,
+  ends the budget. The agent cannot cancel its own budget: the gate denies it.
+
+Invocations are parsed by the `UserPromptSubmit` hook, in code, before the
+model receives the message. A typo is refused, so it cannot quietly start a
+task with no budget.
+
+## How it works
+
+```text
+current remaining quota - your floor - landing reserve = room to work
+```
+
+| State | Behavior |
+| --- | --- |
+| **NORMAL** | Work normally. |
+| **CONSERVE** | Close to the boundary: finish the current objective, start nothing new. |
+| **LAND** | Every write is denied. The agent's final reply is the handoff, saved by a `Stop` hook. |
+| **EMERGENCY** | No quota for another model turn: a deterministic handoff is written locally from task metadata and Git state. |
+| **STOPPED** | The budget is over until a new one is started. |
+
+- **Enforcement uses only real quota snapshots.** On Claude Code they come
+  from the status line. On Codex they come from `account/rateLimits/read`.
+  No model turn is spent checking quota.
+- **Unknown quota is never read as 100%.** Missing, stale, or unreadable quota
+  means `CONSERVE` with `QUOTA UNKNOWN`. A hook that fails while a budget is
+  active denies the write.
+- **The reserve is measured, not guessed.** It is the p90 of observed burn per
+  tool call, priced for the landing sequence and clamped to 3-15%.
+- **Runway is advisory.** `landing status` and the dashboard show how long the
+  remaining room lasts at the observed burn rate. That estimate never changes
+  what is enforced.
+
+More: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md) (states, windows, reserve,
+runway, handoff contract) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+(components and invariants).
+
+## Verification status
+
+| | Reads real quota | Enforces the floor |
 | --- | --- | --- |
-| Codex | none, by design (see below) | `~/.codex/hooks.json` |
-| Claude Code | `~/.claude/skills/landing/` | `~/.claude/settings.json` |
+| **Claude Code** | only where the status line runs (terminal CLI) | **verified** 2026-08-27 on Windows: a blocked write did not run |
+| **Codex** | **verified** on codex-cli 0.150.0-alpha.12.2 | **verified** 2026-08-29 on Windows: implementation patches were denied in LAND |
 
-The merge preserves unrelated settings and hooks. It refuses to overwrite invalid
-JSON or an unowned skill directory with the same name. Hook commands point at the
-Python environment that installed Landing, not at this repository.
+- The handoff is now the agent's final reply, saved by a `Stop` hook. That
+  path is covered by tests but **not yet verified live** on either host. The
+  live runs above used the earlier handoff design, which wrote a file.
+- Enforcement depends on how each host version handles hook denials. After
+  upgrading Codex, rerun the integration check before trusting it.
+- Some Claude Code surfaces never run the status line. There, Landing cannot
+  read quota, so it reports `QUOTA UNKNOWN` and stays in CONSERVE. That is
+  safe, but it cannot hold a floor. Run `landing doctor` and check
+  `quota_source`.
 
-Claude Code has exactly one `statusLine` slot, and it reports `rate_limits`
-there and nowhere else — so that slot is Landing's only quota source. Landing
-**shares** it rather than taking it: an existing status line is wrapped, so
-Landing ingests quota from the payload and then runs your command with the same
-payload and prints its output unchanged. `landing uninstall` puts your original
-command back. A command containing a double quote cannot be re-quoted safely, so
-that one case is refused instead of guessed at.
+The full record, with the evidence for each claim, is in
+[docs/VERIFICATION.md](docs/VERIFICATION.md).
 
-The budget itself lives in `~/.landing/`, not in the repository, because quota
-is account-wide: a floor set in one checkout keeps guarding when the agent moves
-to another against the same quota. Use `--state-scope project` (or
-`LANDING_STATE_SCOPE=project`) for one budget per checkout; `LANDING_HOME` still
-overrides both. `landing install` adopts a budget left in an older
-project-scoped `.landing/` rather than appearing to forget the floor.
+## Known limitations
 
-Codex deliberately requires one manual security confirmation after its hook
-file changes. Open Codex, review the pending hooks, and trust the three Landing
-entries. Use **Trust all and continue** only if every pending hook is expected;
-the review screen can include unrelated plugins. Then rerun `landing doctor`.
-Doctor asks the local app-server whether
-all three hooks are loaded from user scope and trusted; it does not spend a
-model turn. On Windows it also discovers the Codex Desktop executable when it
-is not on PATH.
+- Verified on Windows only. macOS and Linux run the full test suite in CI but
+  have not been checked against real hosts.
+- Claude Code: subscription accounts only (API-key sessions expose no quota),
+  and only surfaces that run the status line. Model-scoped weekly limits shown
+  in `/usage` may not reach the status line.
+- Codex has no `$landing` autocomplete, because Landing intentionally installs no Codex
+  skill ([why](docs/VERIFICATION.md#codex-gets-no-skill-on-purpose)).
+- A task that finishes early leaves its budget armed in that conversation
+  until `/landing cancel`: the gate denies the agent's own `landing complete`.
+  The floor is still a limit, and leftover quota is never spent to reach it.
+  But the next task in the same chat inherits the floor.
+- `landing status` in a terminal does not yet show budgets opened from a chat,
+  since budgets are now tracked per conversation. The status line does.
 
-Install only one host when needed:
+## Documentation
 
-```bash
-landing install --host codex
-landing install --host claude
-```
+- [docs/INSTALLATION.md](docs/INSTALLATION.md): install, update, trust review, uninstall
+- [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md): states, windows, reserve, runway, handoff
+- [docs/COMPARISON.md](docs/COMPARISON.md): Landing compared with existing tools
+- [docs/VERIFICATION.md](docs/VERIFICATION.md): what has been verified on real hosts
+- [docs/DEMO.md](docs/DEMO.md): demo recording script
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): components, state machine, invariants
+- [docs/TESTING.md](docs/TESTING.md): test plan and integration checks
+- [CHANGELOG.md](CHANGELOG.md)
 
-Remove Landing without touching unrelated user configuration:
-
-```bash
-landing uninstall
-```
-
-See [`docs/INSTALLATION.md`](docs/INSTALLATION.md) for update, conflict, trust,
-and verification details. The files under `examples/` remain manual reference
-configurations for development; they are not required in each project.
-
-## Install for development
+## Development
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-```
-
-Smoke test the policy without either agent installed:
-
-```bash
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -e ".[test]"
+pytest -q
 landing simulate --start 100 --leave 70 --burn 0.5,0.7,0.6 --step 2
 ```
 
-Bootstrap a fake Claude snapshot for local testing:
-
-```bash
-landing start \
-  --provider claude \
-  --window five_hour \
-  --leave 70 \
-  --remaining 90 \
-  --task "Demo task"
-```
-
-## Handoff contract
-
-In LAND the agent writes no file. Its final reply is the handoff, and the `Stop`
-hook saves that reply to `~/.landing/handoffs/<time>-<task>.md` -- outside your
-folder, which may not be a project at all. `landing status` shows where the last
-one went. The handoff must include:
-
-1. original task / goal;
-2. completed and verified work;
-3. files changed and intent;
-4. validation/tests and results;
-5. incomplete or unverified work;
-6. important decisions and failed approaches;
-7. exact next steps;
-8. a resume prompt.
-
-If quota reaches the emergency margin, Agent Landing writes a lower-fidelity but deterministic handoff from local task metadata (and Git state, when the folder is a repository) without another model call. It is saved to the same directory.
-
-## Design principles
-
-1. **Never spend AI tokens deciding whether to spend AI tokens.** Quota acquisition and policy math live outside the model.
-2. **Final floor means final floor.** The guard begins landing *before* the user's requested remaining percentage.
-3. **Unknown is not 100%.** Missing or stale quota data must never be interpreted as unlimited headroom.
-4. **Provider-neutral core.** Claude Code and Codex differ in quota acquisition, not in budget semantics.
-5. **Graceful degradation.** Rich model handoff when possible; deterministic Git-state handoff in an emergency.
-6. **The gate fails closed.** A hook that crashes is a hook the host ignores, which would leave the session unguarded while the user still believes it is protected. If the budget cannot be evaluated, work is denied and the message says how to stand the guard down. Where no budget was ever requested, an internal error blocks nothing.
-
-## Technical documentation
-
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — components, data flow, state machine, invariants, and provider boundary.
-- [`docs/TESTING.md`](docs/TESTING.md) — unit, simulation, Claude Code, Codex, and dashboard test plan.
-- [`CLAUDE.md`](CLAUDE.md) — repository-level instructions for Claude Code reviewers/testers.
-
-## v0.1 limitations / next work
-
-- Find out why some Claude Code surfaces never invoke the status line, and
-  whether quota can be reached any other way on them. Until then Landing's
-  Claude support is complete only in the terminal CLI.
-- Validate on macOS and Linux. Everything verified so far was on Windows, where
-  Application Control additionally blocks the `landing` console script and
-  Codex's shell helper, so all commands must go through `python -m
-  agent_landing.cli`.
-- Add task-history/burn-rate charts and a compact cross-provider statusline mode.
-- Add model-scoped Claude limits when/if the runtime exposes them to statusLine.
-- Make landing-safe test commands configurable instead of using a minimal built-in allowlist.
-- Add a local event log so the handoff can include commands/tests even when the model cannot spend a final turn.
-- Add native marketplace/plugin distribution as an optional channel after the
-  cross-host package installer is proven.
-
-### Codex enforcement boundary
-
-Codex enforcement was verified on Windows with codex-cli
-`0.150.0-alpha.12.2` on 2026-08-29. A no-budget control run could create a file;
-with the same write path in LAND, Codex reported that the `PreToolUse` hook
-blocked `apply_patch`, and the target file did not exist afterwards. A second
-LAND run allowed an `apply_patch` that touched only the reserved
-`AGENT_HANDOFF.md`; the file landed and `PostToolUse` stopped the session. This
-proves the tested host build acts on both sides of Landing's gate rather than
-merely displaying its decision.
-
-The handoff half of that run tested a design that has since been replaced: the
-handoff is now the final reply, saved by a `Stop` hook, and LAND denies every
-write. Codex 0.162 exposes `Stop` with `last_assistant_message`, but the new
-path still needs a live LAND run.
-
-That result is deliberately version-scoped. Other Codex builds have reported
-deny-path regressions, so an upgrade is not assumed safe until the same control
-and LAND pair is rerun.
+Bug reports are most useful with the host name and version, `landing doctor`
+output, and whether the problem is the host ignoring a hook decision or Landing
+making the wrong decision.
 
 ## License
 
-MIT
-
-<!-- Documentation sync check. -->
+[MIT](LICENSE)

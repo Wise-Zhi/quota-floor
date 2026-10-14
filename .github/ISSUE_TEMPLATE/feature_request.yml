@@ -1,0 +1,20 @@
+name: Feature request
+description: Suggest an improvement.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like Landing to do?
+  - type: markdown
+    attributes:
+      value: |
+        Landing treats the quota floor as a limit, never a spending target, and
+        never reads unknown quota as full. Proposals that would weaken either of
+        these are unlikely to be accepted.

@@ -20,6 +20,24 @@ All notable changes to Agent Landing are recorded here.
 
 - `landing start --handoff`.
 
+### Documentation
+
+- The README is rewritten for first-time readers. Internals moved to
+  `docs/HOW_IT_WORKS.md` and the live-host record to `docs/VERIFICATION.md`.
+  New `docs/COMPARISON.md` covers existing quota tools, and `docs/DEMO.md` is a
+  zero-quota demo script.
+- GitHub issue templates ask for the host version, and for whether the host
+  ignored a decision or Landing made the wrong one.
+- More PyPI classifiers and keywords.
+
+### Known issues
+
+- The final-reply handoff saved by the `Stop` hook is not yet verified on a live host.
+- The gate denies the agent's own `landing complete`, so a task that finishes
+  early keeps its budget armed in that conversation until `/landing cancel`.
+- `landing status` run in a terminal reads only the default budget, not budgets
+  opened from a chat, which are tracked per conversation.
+
 ## [0.1.0a1] - 2026-08-29
 
 First public alpha candidate.

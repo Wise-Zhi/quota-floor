@@ -1,0 +1,68 @@
+name: Bug report
+description: Landing made a wrong decision, or a host did not act on one.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please do not paste account tokens, auth files, or
+        full transcripts. A `landing doctor` output and the budget state are enough.
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host
+      options:
+        - Claude Code
+        - Codex
+        - Both
+        - Neither (CLI / simulate only)
+    validations:
+      required: true
+  - type: input
+    id: host-version
+    attributes:
+      label: Host version
+      description: "`claude --version` or `codex --version`, and the surface (terminal CLI, desktop app, IDE extension)."
+      placeholder: "codex-cli 0.150.0-alpha.12.2, terminal"
+    validations:
+      required: true
+  - type: input
+    id: landing-version
+    attributes:
+      label: Agent Landing version and OS
+      placeholder: "0.1.0a1, Windows 11"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Which side looks wrong?
+      description: This is the most useful thing to tell us.
+      options:
+        - Landing decided wrongly (wrong state, wrong floor, parse error, bad quota reading)
+        - The host ignored Landing's decision (e.g. a denied write still ran)
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: The `/landing` invocation, the quota you started from, and what the agent did.
+      placeholder: |
+        1. /landing leave 70 fix the tests
+        2. quota was 76% five_hour, 88% weekly
+        3. agent edited src/app.py after status showed LAND
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`landing doctor` and `landing status` output"
+      render: text
