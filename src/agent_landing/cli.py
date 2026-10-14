@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import locale
 import os
 import subprocess
 import sys
@@ -53,6 +54,30 @@ def _reconfigure(stream: TextIO) -> None:
         # by a test with something simpler -- is not a reason to lose the quota
         # reading this command exists to record.
         pass
+
+
+def read_stdin_text() -> str:
+    """Read what a host piped in, as the UTF-8 every host sends.
+
+    Python decodes a piped stdin with the console code page. On a cp949 machine
+    that turned the Chinese in a Codex payload into lone surrogates: the task
+    name was garbage, the first re-encode raised, and the gate -- failing closed
+    as designed -- blocked every tool for the rest of the budget (ChatGPT Work
+    mode, 2026-10-15). A payload that is not UTF-8 falls back to the code page
+    rather than being refused.
+    """
+    buffer = getattr(sys.stdin, "buffer", None)
+    if buffer is None:
+        return sys.stdin.read()
+    data = buffer.read()
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode(locale.getpreferredencoding(False), errors="replace")
+
+
+def read_hook_payload() -> dict[str, Any]:
+    return json.loads(read_stdin_text())
 
 
 def _print_snapshot(snapshot: QuotaSnapshot) -> None:
@@ -114,7 +139,7 @@ def cmd_claude_statusline(args: argparse.Namespace) -> int:
     # raise instead of printing.
     _reconfigure(sys.stdout)
     _reconfigure(sys.stderr)
-    raw_payload = sys.stdin.read()
+    raw_payload = read_stdin_text()
     payload = json.loads(raw_payload)
     snapshot = parse_claude_statusline(payload)
     store = _store(args)
@@ -349,7 +374,7 @@ def cmd_hook_pre(args: argparse.Namespace) -> int:
     """
     store = _store(args)
     try:
-        payload = json.load(sys.stdin)
+        payload = read_hook_payload()
         store = _store(args, payload)
         if args.platform == "codex":
             _refresh_codex_if_needed(store, args.refresh_after_seconds, args.executable)
@@ -364,7 +389,7 @@ def cmd_hook_pre(args: argparse.Namespace) -> int:
 def cmd_hook_post(args: argparse.Namespace) -> int:
     store = _store(args)
     try:
-        payload = json.load(sys.stdin)
+        payload = read_hook_payload()
         store = _store(args, payload)
         result = post_tool(payload, store)
     except Exception as error:  # noqa: BLE001
@@ -379,7 +404,7 @@ def cmd_hook_post(args: argparse.Namespace) -> int:
 def cmd_hook_stop(args: argparse.Namespace) -> int:
     store = _store(args)
     try:
-        payload = json.load(sys.stdin)
+        payload = read_hook_payload()
         store = _store(args, payload)
         result = stop(payload, store)
     except Exception as error:  # noqa: BLE001
@@ -394,7 +419,7 @@ def cmd_hook_stop(args: argparse.Namespace) -> int:
 def cmd_hook_user_prompt(args: argparse.Namespace) -> int:
     store = _store(args)
     try:
-        payload = json.load(sys.stdin)
+        payload = read_hook_payload()
         store = _store(args, payload)
         if args.platform == "codex":
             # A budget opened here needs a reading to open against, and on a
