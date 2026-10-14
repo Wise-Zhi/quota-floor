@@ -131,10 +131,8 @@ class TaskSession:
     mode: str = "preserve"
     started_at: float = field(default_factory=time)
     max_spend_percent: float | None = None
-    handoff_path: str = "AGENT_HANDOFF.md"
-    # True once this task has claimed a path that did not belong to an earlier
-    # task. Further LAND updates keep using that same file.
-    handoff_path_reserved: bool = False
+    #: Where this task's handoff was saved, once it landed. Empty until then.
+    handoff_path: str = ""
     cwd: str = "."
     state: LandingState = LandingState.NORMAL
     last_notified_state: LandingState | None = None

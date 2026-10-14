@@ -10,7 +10,7 @@ from time import time
 from typing import Any
 
 from .budget import BudgetRefused, start_budget
-from .handoff import landing_prompt, reserve_handoff_path, write_fallback_handoff
+from .handoff import landing_prompt, save_reply_handoff, write_fallback_handoff
 from .invocation import extract_invocation, parse_invocation, undecorate
 from .models import LandingState, PolicyDecision, QuotaSnapshot, QuotaWindow, TaskSession
 from .policy import estimate_landing_reserve, evaluate, unknown_quota_decision
@@ -36,84 +36,6 @@ def _candidate_path(tool_input: dict[str, Any]) -> str:
         if isinstance(value, str):
             return value
     return ""
-
-
-_PATCH_FILE_HEADER = re.compile(r"^\*\*\* (Add|Update|Delete) File: (.+)$", re.MULTILINE)
-_PATCH_MOVE_HEADER = re.compile(r"^\*\*\* Move to: (.+)$", re.MULTILINE)
-
-
-def _same_handoff_path(path: str, session: TaskSession) -> bool:
-    candidate = Path(path)
-    expected = Path(session.handoff_path)
-    if not candidate.is_absolute():
-        candidate = Path(session.cwd) / candidate
-    if not expected.is_absolute():
-        expected = Path(session.cwd) / expected
-    return os.path.normcase(os.path.abspath(candidate)) == os.path.normcase(
-        os.path.abspath(expected)
-    )
-
-
-def _apply_patch_only_writes_handoff(command: str, session: TaskSession) -> bool:
-    """Accept a Codex freeform patch only when every operation writes the handoff.
-
-    Codex exposes apply_patch to hooks as ``tool_input.command`` rather than a
-    structured file path. Parse the patch envelope instead of letting the
-    missing path turn the one reserved write into a denial. Deleting or moving
-    the handoff is not landing, and bundling another file into the same patch
-    must not bypass the LAND gate.
-    """
-    operations = _PATCH_FILE_HEADER.findall(command)
-    if not operations or _PATCH_MOVE_HEADER.search(command):
-        return False
-    return all(
-        action in {"Add", "Update"} and _same_handoff_path(path.strip(), session)
-        for action, path in operations
-    )
-
-
-def is_handoff_write(payload: dict[str, Any], session: TaskSession) -> bool:
-    if _tool_name(payload) not in WRITE_TOOLS:
-        return False
-    tool_input = _tool_input(payload)
-    if _tool_name(payload) == "apply_patch":
-        command = tool_input.get("command")
-        return isinstance(command, str) and _apply_patch_only_writes_handoff(command, session)
-    path = _candidate_path(tool_input)
-    if not path:
-        return False
-    return _same_handoff_path(path, session)
-
-
-def _tool_failed(payload: dict[str, Any]) -> bool:
-    """Did the host report this tool call as failed?"""
-    response = payload.get("tool_response") or payload.get("toolResponse")
-    if not isinstance(response, dict):
-        return False
-    return (
-        response.get("success") is False
-        or response.get("is_error") is True
-        or bool(response.get("error"))
-    )
-
-
-def handoff_landed(payload: dict[str, Any], session: TaskSession) -> bool:
-    """Confirm the handoff really exists before calling the task landed.
-
-    `landed` is terminal and deliberately not renewable, so recording it for a
-    write that failed would end the budget with no handoff at all -- precisely
-    the outcome the landing reserve exists to prevent. The write tool reporting
-    success is not enough on its own; the file has to be on disk.
-    """
-    if not is_handoff_write(payload, session) or _tool_failed(payload):
-        return False
-    path = Path(_candidate_path(_tool_input(payload)) or session.handoff_path)
-    if not path.is_absolute():
-        path = Path(session.cwd) / path
-    try:
-        return path.is_file() and path.stat().st_size > 0
-    except OSError:
-        return False
 
 
 # An allowlisted prefix is worthless if the command can chain, redirect, or
@@ -185,10 +107,13 @@ def _flag_name(token: str) -> str:
     return token.split("=", 1)[0]
 
 
-def is_safe_landing_tool(payload: dict[str, Any], session: TaskSession) -> bool:
+def is_safe_landing_tool(payload: dict[str, Any]) -> bool:
+    """May this run in LAND? Reads and an allowlist of inspection commands only.
+
+    No write is ever allowed, the handoff included: it is the final reply now,
+    saved by the Stop hook, so the gate has no exception to get wrong.
+    """
     name = _tool_name(payload)
-    if is_handoff_write(payload, session):
-        return True
     if name in READ_ONLY_TOOLS:
         return True
     if name in {"Bash", "shell", "exec_command"}:
@@ -422,11 +347,8 @@ def _pre_tool_locked(payload: dict[str, Any], store: StateStore) -> dict[str, An
         return {}
 
     if decision.state == LandingState.LAND:
-        if not session.handoff_path_reserved:
-            reserve_handoff_path(session)
-            store.save_session(session)
         context = landing_prompt(session, decision)
-        if is_safe_landing_tool(payload, session):
+        if is_safe_landing_tool(payload):
             if session.last_notified_state != LandingState.LAND:
                 session.last_notified_state = LandingState.LAND
                 store.save_session(session)
@@ -437,14 +359,14 @@ def _pre_tool_locked(payload: dict[str, Any], store: StateStore) -> dict[str, An
         return hook_json(
             decision="deny",
             reason=(
-                "Quota budget boundary reached. New implementation work is blocked; write the "
-                "technical handoff. " + CANCEL_HINT
+                "Quota budget boundary reached. Editing is blocked; write the technical "
+                "handoff as your final reply, then stop. " + CANCEL_HINT
             ),
             context=context,
         )
 
     if decision.state == LandingState.EMERGENCY:
-        write_fallback_handoff(session, decision)
+        session.handoff_path = str(write_fallback_handoff(session, decision, store.handoffs_dir))
         session.state = LandingState.STOPPED
         session.last_notified_state = LandingState.EMERGENCY
         session.stop_reason = "emergency"
@@ -452,8 +374,8 @@ def _pre_tool_locked(payload: dict[str, Any], store: StateStore) -> dict[str, An
         return hook_json(
             decision="deny",
             reason=(
-                f"Emergency quota floor reached. A deterministic `{session.handoff_path}` was written without "
-                "another model call. Stop this task."
+                "Emergency quota floor reached. A deterministic handoff was saved to "
+                f"`{session.handoff_path}` without another model call. Stop this task."
             ),
         )
 
@@ -722,23 +644,52 @@ def user_prompt(
 
 
 def post_tool(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
+    """Retired. The handoff no longer lands through a write; see `stop`.
+
+    Kept as a no-op so a session that loaded the old hooks before an upgrade
+    keeps running cleanly until it is restarted.
+    """
+    return {}
+
+
+def stop(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
+    """Save the final LAND reply as the handoff, and land the task.
+
+    Both hosts give a Stop hook the turn's final reply as
+    `last_assistant_message`. The text is captured here, by Landing, so landing
+    is still proved by something on disk rather than by the model saying so.
+    """
     with store.lock():
         session = store.load_session()
-        if not session:
+        if not session or session.is_inactive or session.state != LandingState.LAND:
             return {}
-        if session.state == LandingState.LAND and handoff_landed(payload, session):
-            session.state = LandingState.STOPPED
-            session.last_notified_state = LandingState.STOPPED
-            # Not renewable: the guard stopped this work because quota ran out.
-            session.stop_reason = "landed"
+
+        if session.last_notified_state != LandingState.LAND and not payload.get("stop_hook_active"):
+            # LAND was reached by a reading that arrived after the last tool
+            # call, so the model never saw the instruction. Its reply is an
+            # ordinary answer, not a handoff: give it the turn to write one.
+            current = evaluate_current(store)
+            session = store.load_session()
+            session.last_notified_state = LandingState.LAND
             store.save_session(session)
-            return {
-                "hookSpecificOutput": {
-                    "hookEventName": "PostToolUse",
-                    "additionalContext": (
-                        f"Technical handoff saved at `{session.handoff_path}`. "
-                        "Tell the user in one sentence and stop."
-                    ),
-                }
-            }
-    return {}
+            reason = landing_prompt(session, current[1]) if current else (
+                "Quota budget boundary reached. Write the technical handoff as your final reply, then stop."
+            )
+            return {"decision": "block", "reason": reason}
+
+        reply = str(payload.get("last_assistant_message") or "").strip()
+        if reply:
+            path = save_reply_handoff(session, reply, store.handoffs_dir)
+        else:
+            current = evaluate_current(store)
+            session = store.load_session()
+            decision = current[1] if current else unknown_quota_decision(session)
+            path = write_fallback_handoff(session, decision, store.handoffs_dir)
+
+        session.state = LandingState.STOPPED
+        session.last_notified_state = LandingState.STOPPED
+        # Not renewable: the guard stopped this work because quota ran out.
+        session.stop_reason = "landed"
+        session.handoff_path = str(path)
+        store.save_session(session)
+        return {"systemMessage": f"Landing: quota floor reached; handoff saved to {path}"}

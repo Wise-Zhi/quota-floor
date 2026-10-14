@@ -21,7 +21,6 @@ from .state import CorruptStateError, StateStore
 #: syntax the user actually typed rather than only in CLI flags.
 WINDOW_WORD = {"five_hour": "5h", "seven_day": "weekly"}
 
-DEFAULT_HANDOFF = "AGENT_HANDOFF.md"
 
 
 class BudgetRefused(Exception):
@@ -83,7 +82,6 @@ def start_budget(
     window: str = "auto",
     preserve: float | None = None,
     max_spend: float | None = None,
-    handoff: str = DEFAULT_HANDOFF,
     cwd: str | None = None,
     config: LandingConfig | None = None,
     authorized_by_user: bool = False,
@@ -177,7 +175,6 @@ def start_budget(
         started_remaining_percent=remaining,
         mode=mode,
         max_spend_percent=max_spend,
-        handoff_path=handoff,
         cwd=str(Path(cwd or os.getcwd()).resolve()),
         last_remaining_percent=remaining,
         config=config,
@@ -259,7 +256,6 @@ def start_budget(
         "final_floor_percent": round(floor, 2),
         "initial_landing_reserve_percent": round(decision.reserve_percent, 2),
         "development_stops_near_percent": round(decision.development_floor_percent, 2),
-        "handoff": handoff,
         "mode": mode,
         "floor_applies_to": scope_windows,
         # Always restated as a REMAINING floor, whichever way the user phrased it,

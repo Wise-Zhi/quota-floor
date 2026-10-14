@@ -59,37 +59,34 @@ Relevant tests: `tests/test_budget_contract.py`.
 
 Verify too that `landing cancel` ends the contract: tool use becomes unrestricted, a later user prompt does not revive it, and the session stays on disk. Relevant tests: `tests/test_cancel.py`.
 
-### 3. LAND blocks new implementation but allows handoff
+### 3. LAND blocks every write and lands through the final reply
 
 Construct a state whose remaining quota is at the development floor. Verify:
 
-- ordinary writes are denied;
+- every write is denied, a handoff file included (Claude `Write`, Codex `apply_patch`);
 - read-only inspection remains available;
-- the configured `AGENT_HANDOFF.md` write is allowed;
-- after the handoff write, the session becomes `STOPPED`.
+- a `Stop` event carrying `last_assistant_message` saves that reply under the
+  state root's `handoffs/` and the session becomes `STOPPED` / `landed`;
+- nothing is written into the working folder.
 
-Verify too that the handoff has to actually exist: a handoff write reported as
-failed, or one that produced no file, must leave the session in `LAND`. Marking
-it `landed` is terminal and not renewable, so recording it on a failed write
-would end the budget with no handoff at all.
-
-Verify that an existing handoff from an earlier task is never overwritten. The
-new task reserves the next numbered filename, uses it for both model-written and
-emergency fallback handoffs, and reports the saved path to the user.
+Verify too that an empty final reply lands with the deterministic fallback, that
+a `Stop` outside LAND changes nothing, and that a LAND the model was never told
+about blocks the first `Stop` once instead of filing an ordinary answer as the
+handoff.
 
 Verify too that the command allowlist cannot be escaped: `git status && <any write>`, `git diff > out.txt`, and `git status $(...)` must all be denied while plain `git status` is allowed.
 
-Relevant tests: `tests/test_hooks.py`, `tests/test_landing_gate.py`.
+Relevant tests: `tests/test_stop_handoff.py`, `tests/test_hooks.py`, `tests/test_landing_gate.py`.
 
 ### 4. Emergency fallback does not require a model turn
 
 Move remaining quota into the emergency margin and invoke a blocked write. Verify that:
 
 - the write is denied;
-- `AGENT_HANDOFF.md` is created locally;
+- a fallback handoff is saved under the state root's `handoffs/`, not the working folder;
 - the task state becomes `STOPPED`.
 
-Relevant test: `test_emergency_writes_fallback`.
+Relevant test: `test_emergency_writes_its_fallback_outside_the_working_folder`.
 
 ### 5. Reserve does not drift with snapshot frequency
 
@@ -189,8 +186,8 @@ to. Verify too that `--state-scope project` restores per-checkout state, that
 `LANDING_HOME` overrides both, and that an unknown scope is refused rather than
 guessed.
 
-Verify that a fresh budget records the checkout where that new task started, so
-an emergency handoff lands in the right directory.
+Verify that a fresh budget records the folder where that new task started, so
+its handoff names the right one.
 
 Relevant tests: `tests/test_state_scope.py`.
 
@@ -221,7 +218,7 @@ Validation goals:
 2. The stored numbers match what `/usage` reports.
 3. `landing status` shows the selected quota window.
 4. PreToolUse receives `CONSERVE`/`LAND` context at the correct boundary.
-5. In `LAND`, new writes are denied while handoff output remains permitted.
+5. In `LAND`, every write is denied, and the final reply is saved by the `Stop` hook.
 6. `UserPromptSubmit` releases a completed task and never renews its floor.
 7. Early completion remains stopped even if substantial quota is unused.
 
@@ -238,9 +235,11 @@ Do not intentionally burn account quota just to hit a threshold. Prefer a floor 
 The Windows integration was last completed on codex-cli
 `0.150.0-alpha.12.2` on 2026-08-29. The control run, with no budget, created a
 file through `apply_patch`. The LAND run used the same write path; Codex
-reported the `PreToolUse` refusal and the file remained absent. A final LAND
-run patched only the reserved `AGENT_HANDOFF.md`; the host executed it and
-`PostToolUse` stopped the session. Record all of those facts when repeating the
+reported the `PreToolUse` refusal and the file remained absent. (A final run
+landed through a reserved `AGENT_HANDOFF.md` patch; that design is replaced by
+the `Stop` hook, so repeat the landing half: in LAND, the final reply should
+appear under `~/.landing/handoffs/` and the session should be `landed`.) Record
+all of those facts when repeating the
 test -- error text alone cannot distinguish a real host denial from a model
 that chose not to write.
 

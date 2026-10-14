@@ -156,6 +156,9 @@ class StateStore:
         # Shared, because quota really is account-wide.
         self.snapshot_path = self.root / "latest_snapshot.json"
         self.history_path = self.root / "snapshots.jsonl"
+        # Handoffs live here rather than in the user's folder, which may not be
+        # a project at all. Created on first use.
+        self.handoffs_dir = self.root / "handoffs"
         # Per conversation, so parallel chats neither serialize on one lock nor
         # read each other's refusal.
         self.lock_path = self.sessions_dir / f"{self.session_key}.lock"

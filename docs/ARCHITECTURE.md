@@ -66,8 +66,9 @@ another checkout. State used to live in `<cwd>/.landing/`, which lost both.
 budget left in an older project-scoped root up to the user-level one, copying
 rather than moving, and never over a budget already in force.
 
-Each fresh budget records its own `session.cwd`, so an emergency handoff lands in
-the checkout owned by that task.
+Each fresh budget records its own `session.cwd`, so a handoff names the folder
+that task worked in. Handoffs themselves are saved under the state root, in
+`handoffs/`, never in that folder.
 
 Writes go through `os.replace` so the file is swapped in one step. The session is
 rewritten on nearly every tool call, which makes a half-written file reachable
@@ -128,7 +129,7 @@ Implements the agent execution gate.
 
 - `NORMAL`: no intervention.
 - `CONSERVE`: injects context once; avoids new large workstreams.
-- `LAND`: denies new implementation writes, allows minimal inspection/testing and the configured handoff write.
+- `LAND`: denies every write, allows minimal inspection/testing, and asks for the handoff as the final reply.
 - `EMERGENCY`: writes a deterministic fallback handoff without a model call, then stops.
 - `STOPPED`: denies further work until a new budget or segment is started.
 
@@ -142,15 +143,24 @@ anyway — so a crash inside the gate silently removes the guard while the user
 still believes they are protected. `pre_tool()` answers unreadable state with a
 denial, and `gate_failure()` converts any other internal error into one as well.
 Where no session file exists there is no mandate to enforce, so a failure there
-stays out of the way exactly as the healthy path does. `post_tool()` and
-`user_prompt()` fail *safe* rather than closed: they can only cancel or release a
-completed budget, so doing nothing leaves the guard running.
+stays out of the way exactly as the healthy path does. `stop()` and
+`user_prompt()` fail *safe* rather than closed: they can only land, cancel or
+release a budget, so doing nothing leaves the guard running.
 
-`post_tool()` marks the task stopped once the model-written handoff succeeds,
-with `stop_reason="landed"`. Success means the file is on disk and non-empty, not
-merely that the write tool reported success: `landed` is terminal, so recording
-it for a failed write would end the budget with no
-handoff at all — the exact outcome the landing reserve exists to prevent.
+`stop()` lands the task. Both hosts give a `Stop` hook the turn's final reply as
+`last_assistant_message`; in LAND, Landing saves that text itself and records
+`stop_reason="landed"`, so landing is still proved by a file Landing wrote, not by
+the model's word. An empty reply gets the deterministic fallback instead. If the
+model ended its turn without ever being told to land -- LAND reached by a reading
+that arrived after its last tool call -- the first `Stop` blocks once with the
+landing instruction, and the next one saves whatever it gets.
+
+This replaced a model-written `AGENT_HANDOFF.md` in the working folder. That
+design needed the LAND gate to let exactly one write through, and the exception
+was where bugs lived (Codex's `apply_patch` envelope once made it deny the very
+write LAND exists to permit). It also cluttered folders that were often not
+projects. `post_tool()` remains only as a no-op for sessions that loaded the old
+hooks; the installer removes its entry.
 
 `user_prompt()` releases `task_complete` only after control returns to the user;
 it never renews the old floor.
@@ -159,13 +169,13 @@ it never renews the old floor.
 
 Provides both:
 
-- a model-facing landing prompt for a rich `AGENT_HANDOFF.md`;
+- a model-facing landing prompt asking for the handoff as the final reply;
+- `save_reply_handoff()`, which files that reply;
 - a deterministic local fallback when quota is too low for another model turn.
 
-`reserve_handoff_path()` claims one path per task. If the requested path already
-exists before that claim, it is treated as an earlier task's artifact and the
-next numbered sibling is selected. Once reserved, LAND and EMERGENCY keep using
-that same path. Normal task completion creates no handoff file.
+Every handoff gets a fresh `<time>-<task>.md` under the state root's
+`handoffs/`; the task slug cannot carry a path separator. Normal task completion
+creates no handoff.
 
 ### `runway.py`
 
@@ -190,7 +200,7 @@ Entry point for:
 - provider snapshot ingestion;
 - `invoke` — parse a raw invocation and start the budget, refusing on any ambiguity;
 - starting a budgeted task;
-- hook integration (`hook-pre-tool`, `hook-post-tool`, `hook-user-prompt`);
+- hook integration (`hook-pre-tool`, `hook-user-prompt`, `hook-stop`; `hook-post-tool` is a retired no-op);
 - status and dashboard;
 - early completion, and `cancel` to end the contract entirely;
 - deterministic fallback handoff;
@@ -289,8 +299,9 @@ The provider interface is intentionally small: convert provider-specific quota d
 - **Some Claude Code surfaces never invoke the status line at all.** Verified on Windows on 2026-08-27: the `PreToolUse`, `PostToolUse` and `UserPromptSubmit` hooks all ran, while the configured `statusLine` command was never called once across a full session. Because the status line is Landing's only Claude quota source, the Claude guard has no quota on such a surface and stays in `CONSERVE` / `QUOTA UNKNOWN` — every other check reports a healthy install. `landing doctor` reports this as `quota_source: pending`; see below.
 - Codex hook enforcement depends on host behavior. Verified on Windows with
   codex-cli `0.150.0-alpha.12.2` on 2026-08-29: a no-budget control could create
-  a file, LAND blocked the same implementation `apply_patch`, and a patch that
-  touched only the reserved handoff file landed and stopped the session. Keep
+  a file, and LAND blocked the same implementation `apply_patch`. (That run also
+  landed through a reserved handoff patch, a design since replaced by the `Stop`
+  hook, which still needs a live run.) Keep
   this claim version-scoped because other builds have reported deny-path
   regressions.
 - Codex exposes `UserPromptSubmit` as of codex-cli 0.149.0-alpha.4.3, verified via `hooks/list` on its app-server; Landing uses it for explicit chat cancellation, not task renewal.

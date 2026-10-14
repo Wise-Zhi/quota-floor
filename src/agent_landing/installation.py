@@ -24,9 +24,20 @@ from .state import resolve_state_root
 HOSTS = ("codex", "claude")
 EVENT_COMMANDS = {
     "PreToolUse": "hook-pre-tool",
-    "PostToolUse": "hook-post-tool",
     "UserPromptSubmit": "hook-user-prompt",
+    "Stop": "hook-stop",
 }
+
+#: Hooks an older Landing installed and this one no longer does. Install and
+#: uninstall both remove Landing's own entries for them; anything else under the
+#: same event is left alone. `PostToolUse` watched for the handoff write, and the
+#: handoff is now the final reply, saved by `Stop`.
+RETIRED_EVENT_COMMANDS = {
+    "PostToolUse": "hook-post-tool",
+}
+
+#: Tool events take a matcher on Codex; prompt and turn events do not.
+_TOOL_EVENTS = frozenset({"PreToolUse", "PostToolUse"})
 MARKER = ".landing-install.json"
 
 #: Hosts where Landing ships a skill. Codex is deliberately absent.
@@ -154,7 +165,7 @@ def _hook_group(
         hook["commandWindows"] = subprocess.list2cmdline(parts)
         hook["timeout"] = 20
     group: dict[str, Any] = {"hooks": [hook]}
-    if host == "codex" and event != "UserPromptSubmit":
+    if host == "codex" and event in _TOOL_EVENTS:
         group["matcher"] = "*"
     return group
 
@@ -242,6 +253,13 @@ def _merged_config(
     if not isinstance(hooks_value, dict):
         raise InstallationConflict("The existing hooks value must be a JSON object")
     hooks = dict(hooks_value)
+    for event, action in RETIRED_EVENT_COMMANDS.items():
+        if event in hooks:
+            remaining = _remove_landing_groups(hooks[event], platform=host, action=action)
+            if remaining:
+                hooks[event] = remaining
+            else:
+                hooks.pop(event)
     for event, action in EVENT_COMMANDS.items():
         groups = _remove_landing_groups(hooks.get(event), platform=host, action=action)
         groups.append(_hook_group(host, event, python_executable, os_name))
@@ -510,7 +528,7 @@ def _without_landing_config(host: str, config: dict[str, Any]) -> tuple[dict[str
     hooks_value = merged.get("hooks")
     if isinstance(hooks_value, dict):
         hooks = dict(hooks_value)
-        for event, action in EVENT_COMMANDS.items():
+        for event, action in {**EVENT_COMMANDS, **RETIRED_EVENT_COMMANDS}.items():
             before = hooks.get(event)
             if before is None:
                 continue
@@ -770,7 +788,7 @@ def doctor_host(
             checks.append({
                 "name": "codex_hooks_loaded",
                 "status": "ok" if actions_loaded else "error",
-                "detail": "all three hooks loaded from user scope" if actions_loaded else "Landing user hooks were not all loaded",
+                "detail": f"all {len(EVENT_COMMANDS)} hooks loaded from user scope" if actions_loaded else "Landing user hooks were not all loaded",
             })
             checks.append({
                 "name": "codex_hooks_trusted",

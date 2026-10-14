@@ -61,7 +61,7 @@ def test_codex_install_is_global_portable_and_preserves_unrelated_hooks(tmp_path
     assert config["description"] == "mine"
     assert config["extra"] == {"keep": True}
     assert "audit" in _commands(config, "PreToolUse")
-    for event in ("PreToolUse", "PostToolUse", "UserPromptSubmit"):
+    for event in ("PreToolUse", "UserPromptSubmit", "Stop"):
         landing = [command for command in _commands(config, event) if "agent_landing.cli" in command]
         assert len(landing) == 1
         assert "C:/Python/python.exe" in landing[0]
@@ -101,7 +101,7 @@ def test_codex_reinstall_replaces_old_landing_entries_without_duplicates(tmp_pat
     config = _read(tmp_path / ".codex" / "hooks.json")
 
     assert result["status"] == "updated"
-    for event in ("PreToolUse", "PostToolUse", "UserPromptSubmit"):
+    for event in ("PreToolUse", "UserPromptSubmit", "Stop"):
         landing = [command for command in _commands(config, event) if "agent_landing.cli" in command]
         assert len(landing) == 1
         assert "C:/New/python.exe" in landing[0]
@@ -122,7 +122,7 @@ def test_claude_install_merges_settings_and_installs_user_skill(tmp_path):
     assert settings["permissions"] == {"allow": ["Read"]}
     assert "Stop" in settings["hooks"]
     assert settings["statusLine"]["command"].startswith("/opt/landing/bin/python -m agent_landing.cli")
-    for event in ("PreToolUse", "PostToolUse", "UserPromptSubmit"):
+    for event in ("PreToolUse", "UserPromptSubmit", "Stop"):
         assert len([c for c in _commands(settings, event) if "agent_landing.cli" in c]) == 1
     assert (tmp_path / ".claude" / "skills" / "landing" / "SKILL.md").is_file()
 
@@ -640,3 +640,35 @@ def test_doctor_is_green_when_codex_loads_hooks_and_no_skill(tmp_path, monkeypat
 
     assert names["codex_skill_absent"] == "ok"
     assert names["codex_hooks_trusted"] == "ok"
+
+
+def test_reinstalling_removes_the_retired_post_tool_hook(tmp_path):
+    """The handoff no longer lands through a write, so the hook that watched for
+    that write is gone. An upgrade must take Landing's old entry away -- and only
+    Landing's -- or every tool call keeps paying for a process that does nothing."""
+    config_path = tmp_path / ".codex" / "hooks.json"
+    config_path.parent.mkdir()
+    old = "python -m agent_landing.cli hook-post-tool --platform codex"
+    config_path.write_text(json.dumps({"hooks": {"PostToolUse": [
+        {"matcher": "*", "hooks": [{"type": "command", "command": old}]},
+        {"matcher": "*", "hooks": [{"type": "command", "command": "keep-me"}]},
+    ]}}), encoding="utf-8")
+
+    install_host("codex", home=tmp_path, python_executable="python", os_name="posix")
+    config = _read(config_path)
+
+    assert _commands(config, "PostToolUse") == ["keep-me"]
+    assert any("hook-stop" in c for c in _commands(config, "Stop"))
+
+
+def test_the_claude_stop_hook_sits_beside_the_user_s_own(tmp_path):
+    settings_path = tmp_path / ".claude" / "settings.json"
+    settings_path.parent.mkdir()
+    settings_path.write_text(json.dumps({"hooks": {"Stop": [
+        {"hooks": [{"type": "command", "command": "notify-me"}]},
+    ]}}), encoding="utf-8")
+
+    install_host("claude", home=tmp_path, python_executable="python", os_name="posix")
+    commands = _commands(_read(settings_path), "Stop")
+    assert "notify-me" in commands
+    assert len([c for c in commands if "hook-stop" in c]) == 1

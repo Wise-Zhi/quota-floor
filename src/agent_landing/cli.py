@@ -17,6 +17,7 @@ from .hooks import (
     gate_failure,
     post_tool,
     pre_tool,
+    stop,
     user_prompt,
 )
 from .installation import HOSTS, InstallationConflict, doctor_host, install_host, uninstall_host
@@ -278,7 +279,6 @@ def cmd_start(args: argparse.Namespace) -> int:
             window=args.window,
             preserve=args.preserve,
             max_spend=args.max_spend,
-            handoff=args.handoff,
             cwd=args.cwd,
             config=LandingConfig(
                 min_reserve_percent=args.min_reserve,
@@ -370,6 +370,21 @@ def cmd_hook_post(args: argparse.Namespace) -> int:
         # Fail *safe* rather than closed: this hook only ever ends a session, so
         # doing nothing leaves the guard running instead of releasing it.
         print(f"landing: post-tool hook error: {error}", file=sys.stderr)
+        result = {}
+    print(json.dumps(result, separators=(",", ":")))
+    return 0
+
+
+def cmd_hook_stop(args: argparse.Namespace) -> int:
+    store = _store(args)
+    try:
+        payload = json.load(sys.stdin)
+        store = _store(args, payload)
+        result = stop(payload, store)
+    except Exception as error:  # noqa: BLE001
+        # Fail safe: this hook only ever lands a task. Doing nothing leaves the
+        # budget in LAND, where the gate keeps denying writes.
+        print(f"landing: stop hook error: {error}", file=sys.stderr)
         result = {}
     print(json.dumps(result, separators=(",", ":")))
     return 0
@@ -479,7 +494,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         "segment": session.segment_count,
         "previous_tasks": session.previous_tasks,
         "runway": runway.to_dict(),
-        "handoff": session.handoff_path,
+        "handoff": session.handoff_path or None,
     }
     print(json.dumps(payload, indent=2))
     return 0
@@ -574,7 +589,7 @@ def cmd_fallback(args: argparse.Namespace) -> int:
     if not current:
         raise SystemExit("No active task with a usable quota snapshot.")
     session, decision = current
-    path = write_fallback_handoff(session, decision)
+    path = write_fallback_handoff(session, decision, store.handoffs_dir)
     print(path)
     return 0
 
@@ -611,7 +626,6 @@ def cmd_simulate(args: argparse.Namespace) -> int:
 
 def _add_budget_tuning_args(p: argparse.ArgumentParser) -> None:
     """Shared by `start` and `invoke` so the two cannot diverge."""
-    p.add_argument("--handoff", default="AGENT_HANDOFF.md")
     p.add_argument("--remaining", type=float, help="manual quota value for testing/bootstrap")
     p.add_argument("--executable", default="codex")
     p.add_argument("--min-reserve", type=float, default=3.0)
@@ -738,9 +752,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--executable", default="codex")
     p.set_defaults(func=cmd_hook_pre)
 
-    p = sub.add_parser("hook-post-tool", help="mark handoff completion after the handoff write tool succeeds")
+    p = sub.add_parser(
+        "hook-post-tool",
+        help="retired: kept so sessions started before an upgrade do not error",
+    )
     p.add_argument("--platform", choices=["claude", "codex"], required=True)
     p.set_defaults(func=cmd_hook_post)
+
+    p = sub.add_parser("hook-stop", help="save the final LAND reply as the task's handoff")
+    p.add_argument("--platform", choices=["claude", "codex"], required=True)
+    p.set_defaults(func=cmd_hook_stop)
 
     p = sub.add_parser(
         "hook-user-prompt",

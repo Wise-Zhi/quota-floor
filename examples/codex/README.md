@@ -148,7 +148,7 @@ they do not move with the Codex version:
 | Tool call | Decision |
 | --- | --- |
 | `apply_patch` to an arbitrary file | `deny` |
-| `apply_patch` to `AGENT_HANDOFF.md` | allowed |
+| `apply_patch` to `AGENT_HANDOFF.md` | `deny` (the handoff is the final reply, saved by `Stop`) |
 | `shell` running `git status` | allowed |
 | `shell` running `git status && python -c ...` | `deny` |
 | `read_file` | allowed |

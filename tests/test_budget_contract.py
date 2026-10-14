@@ -3,7 +3,7 @@
 from pathlib import Path
 from time import time
 
-from agent_landing.hooks import post_tool, pre_tool, user_prompt
+from agent_landing.hooks import pre_tool, stop, user_prompt
 from agent_landing.models import LandingState, QuotaSnapshot, QuotaWindow, TaskSession
 from agent_landing.state import StateStore
 
@@ -79,8 +79,7 @@ def test_landed_session_is_not_renewable_by_a_user_prompt(tmp_path):
     """A landed budget means quota actually ran out; a new prompt must not reopen it."""
     store = store_with_session(tmp_path, 73.5)
     pre_tool(WRITE, store)
-    (tmp_path / "AGENT_HANDOFF.md").write_text("# handoff", encoding="utf-8")
-    post_tool({"tool_name": "Write", "tool_input": {"file_path": "AGENT_HANDOFF.md"}}, store)
+    stop({"last_assistant_message": "## Next steps 1. finish"}, store)
     assert store.load_session().stop_reason == "landed"
 
     assert user_prompt({"prompt": "keep going"}, store) == {}

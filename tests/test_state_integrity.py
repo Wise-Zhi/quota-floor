@@ -15,7 +15,7 @@ from time import time
 import pytest
 
 from agent_landing.cli import build_parser, main
-from agent_landing.hooks import gate_failure, post_tool, pre_tool, user_prompt
+from agent_landing.hooks import gate_failure, pre_tool, stop, user_prompt
 from agent_landing.models import LandingState, QuotaSnapshot, QuotaWindow, TaskSession
 from agent_landing.state import CorruptStateError, StateStore
 
@@ -80,12 +80,12 @@ def test_the_session_ending_hooks_fail_safe_instead_of_closed(tmp_path):
     store = store_with_session(tmp_path)
     truncate_session(store)
     with pytest.raises(CorruptStateError):
-        post_tool({"tool_name": "Write", "tool_input": {"file_path": "AGENT_HANDOFF.md"}}, store)
+        stop({"last_assistant_message": "handoff"}, store)
     with pytest.raises(CorruptStateError):
         user_prompt({"prompt": "next"}, store)
 
     # The CLI wrappers are what the host actually runs, and they must not raise.
-    for command in ("hook-post-tool", "hook-user-prompt"):
+    for command in ("hook-stop", "hook-post-tool", "hook-user-prompt"):
         args = build_parser().parse_args(["--cwd", str(tmp_path), command, "--platform", "claude"])
         assert args.func(args) == 0
 

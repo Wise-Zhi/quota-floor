@@ -8,7 +8,7 @@ type = "command"
 command = "landing hook-pre-tool --platform codex"
 statusMessage = "checking task quota budget"
 
-[[hooks.PostToolUse]]
-[[hooks.PostToolUse.hooks]]
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
 type = "command"
-command = "landing hook-post-tool --platform codex"
+command = "landing hook-stop --platform codex"

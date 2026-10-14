@@ -38,7 +38,7 @@ and replaces old Landing hook entries instead of adding duplicates.
   a skill made the model announce Landing before starting any task. An older
   install's skill is removed on the next `landing install`.
 - Hooks: merged into `~/.codex/hooks.json`
-- Events: `PreToolUse`, `PostToolUse`, and `UserPromptSubmit`
+- Events: `PreToolUse`, `UserPromptSubmit`, and `Stop` (an older install's `PostToolUse` entry is removed)
 
 Codex hook commands invoke the Python interpreter that owns Landing. The
 installer also locates the Codex Desktop binary on Windows when `codex` is not
@@ -48,7 +48,7 @@ on PATH, so the pre-tool hook can refresh quota through app-server.
 
 - Skill: `~/.claude/skills/landing/`
 - Hooks and status line: merged into `~/.claude/settings.json`
-- Events: `PreToolUse`, `PostToolUse`, and `UserPromptSubmit`
+- Events: `PreToolUse`, `UserPromptSubmit`, and `Stop` (an older install's `PostToolUse` entry is removed)
 
 Claude Code supports only one `statusLine`, and it reports `rate_limits` there
 and nowhere else — so that single slot is Landing's only quota source on Claude.

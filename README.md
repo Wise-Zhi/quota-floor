@@ -10,7 +10,11 @@ Claude Code is still complete only on surfaces where its status line runs:
 > | | Reads real quota | Enforces the floor |
 > | --- | --- | --- |
 > | **Claude Code** | only where the status line runs — see below | **verified** 2026-08-27: a blocked write did not run |
-> | **Codex** | **verified** on codex-cli 0.150.0-alpha.12.2 | **verified** 2026-08-29 on Windows: implementation patches were denied while the reserved handoff patch landed |
+> | **Codex** | **verified** on codex-cli 0.150.0-alpha.12.2 | **verified** 2026-08-29 on Windows: implementation patches were denied in LAND |
+>
+> The handoff is now the agent's final reply, saved by a `Stop` hook outside
+> your folder. That path is covered by tests but **not yet verified live** on
+> either host.
 >
 > Everything degrades safe rather than silently: unknown quota conserves, it is
 > never read as 100%. Host enforcement remains version-specific; rerun the
@@ -148,7 +152,7 @@ offered in the first place.
 
 - **NORMAL** — work normally.
 - **CONSERVE** — quota is getting close; finish the bounded objective and avoid new workstreams.
-- **LAND** — block new implementation work, permit minimal read-only inspection, save this task's reserved handoff file, then stop. Existing handoffs from earlier tasks are preserved; a new task uses `AGENT_HANDOFF-2.md`, `-3.md`, and so on.
+- **LAND** — block every write, permit minimal read-only inspection, and have the agent write the handoff as its final reply; a `Stop` hook saves it to `~/.landing/handoffs/` and the task stops. Nothing is written into your folder.
 - **EMERGENCY** — write a deterministic handoff locally without spending another model turn, then block tools.
 - **STOPPED** — the budgeted task is over until a new budget is explicitly started.
 
@@ -241,7 +245,7 @@ The calculation is local Python. It does **not** invoke an AI model.
 
 ## Claude Code
 
-Claude Code's status-line payload exposes the base `five_hour` and `seven_day` usage windows. Configure `landing claude-statusline` so the runtime quota is persisted locally, then use the Pre/PostToolUse gates.
+Claude Code's status-line payload exposes the base `five_hour` and `seven_day` usage windows. Configure `landing claude-statusline` so the runtime quota is persisted locally, then use the hooks (`PreToolUse` gate, `UserPromptSubmit`, `Stop`).
 
 See [`examples/claude/settings.json`](examples/claude/settings.json).
 
@@ -386,7 +390,10 @@ landing start \
 
 ## Handoff contract
 
-The model-written handoff must include:
+In LAND the agent writes no file. Its final reply is the handoff, and the `Stop`
+hook saves that reply to `~/.landing/handoffs/<time>-<task>.md` -- outside your
+folder, which may not be a project at all. `landing status` shows where the last
+one went. The handoff must include:
 
 1. original task / goal;
 2. completed and verified work;
@@ -397,7 +404,7 @@ The model-written handoff must include:
 7. exact next steps;
 8. a resume prompt.
 
-If quota reaches the emergency margin, Agent Landing writes a lower-fidelity but deterministic handoff from local task metadata and Git state without another model call.
+If quota reaches the emergency margin, Agent Landing writes a lower-fidelity but deterministic handoff from local task metadata (and Git state, when the folder is a repository) without another model call. It is saved to the same directory.
 
 ## Design principles
 
@@ -440,6 +447,11 @@ LAND run allowed an `apply_patch` that touched only the reserved
 `AGENT_HANDOFF.md`; the file landed and `PostToolUse` stopped the session. This
 proves the tested host build acts on both sides of Landing's gate rather than
 merely displaying its decision.
+
+The handoff half of that run tested a design that has since been replaced: the
+handoff is now the final reply, saved by a `Stop` hook, and LAND denies every
+write. Codex 0.162 exposes `Stop` with `last_assistant_message`, but the new
+path still needs a live LAND run.
 
 That result is deliberately version-scoped. Other Codex builds have reported
 deny-path regressions, so an upgrade is not assumed safe until the same control
