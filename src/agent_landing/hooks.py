@@ -69,7 +69,45 @@ _SAFE_LANDING_COMMANDS: tuple[tuple[tuple[str, ...], frozenset[str]], ...] = (
     (("git", "rev-parse"), frozenset({"--show-toplevel", "--abbrev-ref", "--git-dir", "--verify"})),
     (("pytest",), _PYTEST_FLAGS),
     (("python", "-m", "pytest"), _PYTEST_FLAGS),
+    # Read-only inspection, so a handoff can describe what it hands off. In
+    # ChatGPT Work mode the agent's first LAND move, `Get-Location; rg --files
+    # -g fib.py .`, was denied, and the handoff could only say "nothing read".
+    # Every flag here only reads. Absent on purpose: `rg --pre`/`-z` (run
+    # programs), `find -exec`/`-delete`/`-fprint`, and any cmdlet that writes.
+    (("rg",), frozenset({
+        "-n", "--line-number", "-N", "--no-line-number", "-i", "--ignore-case",
+        "-s", "--case-sensitive", "-S", "--smart-case", "-l", "--files-with-matches",
+        "--files", "-g", "--glob", "-t", "--type", "-T", "--type-not", "-c", "--count",
+        "-C", "--context", "-A", "--after-context", "-B", "--before-context",
+        "-w", "--word-regexp", "-F", "--fixed-strings", "-e", "--regexp", "--hidden",
+        "--no-ignore", "-u", "-uu", "-m", "--max-count", "--max-depth", "--no-heading",
+        "--heading", "-v", "--invert-match", "-x", "--line-regexp", "-o", "--only-matching",
+        "-H", "--with-filename", "--sort",
+    })),
+    *(((name,), frozenset({
+        "-path", "-literalpath", "-totalcount", "-head", "-tail", "-raw", "-encoding",
+        "-first", "-last", "-n",
+    })) for name in ("get-content", "gc", "cat", "type", "head", "tail")),
+    *(((name,), frozenset({
+        "-path", "-literalpath", "-filter", "-recurse", "-name", "-file", "-directory",
+        "-force", "-depth", "-include", "-exclude", "-l", "-a", "-la", "-al", "-r", "-1",
+        "-h", "-lh",
+    })) for name in ("get-childitem", "gci", "dir", "ls")),
+    *(((name,), frozenset()) for name in ("get-location", "gl", "pwd")),
+    *(((name,), frozenset({
+        "-pattern", "-path", "-literalpath", "-simplematch", "-casesensitive", "-context",
+        "-list", "-notmatch", "-allmatches",
+    })) for name in ("select-string", "sls")),
+    (("find",), frozenset({
+        "-name", "-iname", "-type", "-maxdepth", "-mindepth", "-path", "-ipath", "-print",
+    })),
+    (("wc",), frozenset({"-l", "-w", "-c"})),
 )
+
+#: Read-only commands may be chained with these, each part checked on its own.
+#: Pipes and redirects stay out entirely: `cat a > b` and `gc a | Set-Content b`
+#: are writes however innocent the first command is.
+_COMMAND_SEPARATOR = re.compile(r"\s*(?:;|&&)\s*")
 
 
 def is_safe_landing_command(command: str) -> bool:
@@ -79,7 +117,11 @@ def is_safe_landing_command(command: str) -> bool:
     their own; only tokens that look like flags are checked, and an unrecognized
     flag is a refusal rather than a pass.
     """
-    command = command.strip()
+    parts = _COMMAND_SEPARATOR.split(command.strip())
+    return bool(parts) and all(_is_safe_single_command(part) for part in parts)
+
+
+def _is_safe_single_command(command: str) -> bool:
     if not command or _SHELL_CONTROL.search(command):
         return False
     try:
@@ -90,12 +132,15 @@ def is_safe_landing_command(command: str) -> bool:
     if not tokens:
         return False
 
+    # PowerShell names and parameters are case-insensitive; `rg -C` and `rg -c`
+    # are different flags, so an exact match is tried first.
+    lowered = [token.lower() for token in tokens]
     for prefix, allowed_flags in _SAFE_LANDING_COMMANDS:
-        if tuple(tokens[: len(prefix)]) != prefix:
+        if tuple(lowered[: len(prefix)]) != prefix:
             continue
         rest = tokens[len(prefix):]
         return all(
-            _flag_name(token) in allowed_flags
+            _flag_name(token) in allowed_flags or _flag_name(token).lower() in allowed_flags
             for token in rest
             if token.startswith("-")
         )

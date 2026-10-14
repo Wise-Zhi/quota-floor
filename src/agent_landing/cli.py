@@ -423,8 +423,13 @@ def cmd_hook_user_prompt(args: argparse.Namespace) -> int:
         store = _store(args, payload)
         if args.platform == "codex":
             # A budget opened here needs a reading to open against, and on a
-            # fresh session nothing has refreshed one yet.
-            _refresh_codex_if_needed(store, args.refresh_after_seconds, args.executable)
+            # fresh session nothing has refreshed one yet. When this prompt opens
+            # a budget, read afresh regardless of age: the baseline is what a
+            # `spend` is measured from, and a minute-old reading had already
+            # missed the previous turn's cost (ChatGPT Work mode, 2026-10-15).
+            opening = extract_invocation(str(payload.get("prompt") or "")) is not None
+            max_age = 0.0 if opening else args.refresh_after_seconds
+            _refresh_codex_if_needed(store, max_age, args.executable)
         result = user_prompt(payload, store, provider=args.platform)
         if result.get("decision") == "block":
             print(result.get("reason", ""), file=sys.stderr)

@@ -83,3 +83,18 @@ def test_the_hook_records_a_chinese_task_intact(tmp_path, monkeypatch, capsys):
 
     session = StateStore(session_id="s").load_session()
     assert (session.mode, session.task) == ("preserve", "给 src/fib.py 加一行 docstring")
+
+
+def test_a_prompt_that_opens_a_budget_reads_quota_afresh(tmp_path, monkeypatch):
+    """The baseline a `spend` is measured from must not be a minute old."""
+    import agent_landing.cli as cli
+
+    monkeypatch.setenv("LANDING_HOME", str(tmp_path))
+    ages = []
+    monkeypatch.setattr(cli, "_refresh_codex_if_needed", lambda store, max_age, exe: ages.append(max_age))
+    for prompt in ("$landing spend 10 fix it", "just a normal message"):
+        monkeypatch.setattr(sys, "stdin", _stdin(json.dumps({"prompt": prompt}).encode("utf-8")))
+        args = build_parser().parse_args(["hook-user-prompt", "--platform", "codex"])
+        args.func(args)
+    assert ages[0] == 0.0
+    assert ages[1] == 60.0
