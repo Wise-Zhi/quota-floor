@@ -101,6 +101,29 @@ def _quote_command(parts: list[str], os_name: str) -> str:
     return subprocess.list2cmdline(parts) if os_name == "nt" else shlex.join(parts)
 
 
+def _claude_command(parts: list[str], os_name: str) -> str:
+    """Quote a command for Claude Code, which runs it through Git Bash on Windows.
+
+    Bash treats a backslash as an escape character, so `C:\\Users\\x\\python.exe`
+    turned into `C:Usersxpython.exe: command not found`. Every hook then failed
+    as a non-blocking error, so the gate was silently open and the status line
+    (the only Claude quota source) never ran. This was observed 2026-10-15 in the
+    terminal CLI 2.1.211. Windows accepts forward slashes, and list2cmdline's
+    double quotes mean the same thing to bash and to cmd.
+    """
+    if os_name == "nt" and parts:
+        parts = [parts[0].replace("\\", "/"), *parts[1:]]
+    return _quote_command(parts, os_name)
+
+
+def _bash_breaks_executable(command: str) -> bool:
+    """True when bash would strip the backslashes from the command's executable."""
+    first = command.strip()
+    if first.startswith('"'):
+        return False
+    return "\\" in first.split(" ", 1)[0]
+
+
 def _landing_command(command: Any, *, platform: str | None = None, action: str | None = None) -> bool:
     if not isinstance(command, str):
         return False
@@ -159,7 +182,7 @@ def _hook_group(
     # changes on every update. Baking the path in meant each update invalidated
     # the trust and quietly reverted the one hook that blocks to untrusted.
     # `resolve_codex_executable()` finds it at call time instead.
-    command = _quote_command(parts, os_name)
+    command = _claude_command(parts, os_name) if host == "claude" else _quote_command(parts, os_name)
     hook: dict[str, Any] = {"type": "command", "command": command}
     if host == "codex":
         hook["commandWindows"] = subprocess.list2cmdline(parts)
@@ -183,7 +206,7 @@ def _status_line(python_executable: str, os_name: str, wrapped: str | None = Non
     parts = [python_executable, "-m", "agent_landing.cli", "claude-statusline"]
     if wrapped:
         parts += [WRAP_FLAG, wrapped]
-    return {"type": "command", "command": _quote_command(parts, os_name)}
+    return {"type": "command", "command": _claude_command(parts, os_name)}
 
 
 def _wrapped_status_line(command: Any) -> str | None:
@@ -755,6 +778,17 @@ def doctor_host(
                 "name": "statusLine",
                 "status": "ok" if found else "error",
                 "detail": detail,
+            })
+        if host == "claude" and os.name == "nt":
+            broken = any(_bash_breaks_executable(command) for command in configured_commands)
+            checks.append({
+                "name": "bash_safe_paths",
+                "status": "error" if broken else "ok",
+                "detail": (
+                    "hooks name Python with backslashes, which Claude Code's Git Bash strips "
+                    "(\"command not found\"), leaving the gate open; rerun `landing install --host claude`"
+                    if broken else "hook commands survive Git Bash"
+                ),
             })
         current_runtime = str(Path(sys.executable).resolve()).replace("\\", "/").casefold()
         runtime_current = bool(configured_commands) and all(
