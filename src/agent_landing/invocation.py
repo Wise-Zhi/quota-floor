@@ -394,10 +394,25 @@ _AMBIENT_BLOCK = re.compile(
     r"^\s*<([\w-]+)\b[^>]*\bsource=\"ambient-ui-state\"[^>]*>.*?</\1>\s*", re.DOTALL
 )
 _REQUEST_HEADING = re.compile(r"^\s*#+\s*My request:\s*", re.IGNORECASE)
+#: The heading as a line of its own, anywhere in the prompt.
+_REQUEST_HEADING_LINE = re.compile(r"^[ \t]*#+[ \t]*My request:[ \t]*$", re.IGNORECASE | re.MULTILINE)
+#: Attachment tags the app appends after the request.
+_TRAILING_ATTACHMENTS = re.compile(r"(?:\s*<(image|file)\b[^>]*>\s*</\1>)+\s*$", re.IGNORECASE)
 
 
 def strip_host_context(prompt: str) -> str:
+    """The user's own words, without what the host wrapped around them.
+
+    With an attachment the same app puts a file list *before* the ambient
+    block, so the request is found by its heading rather than by stripping from
+    the top. The last heading wins: the host's own request always comes last,
+    and an attached document quoting the heading must not become the request.
+    """
     text = prompt or ""
+    headings = list(_REQUEST_HEADING_LINE.finditer(text))
+    if headings:
+        text = text[headings[-1].end():]
+        return _TRAILING_ATTACHMENTS.sub("", text)
     stripped = False
     while True:
         match = _AMBIENT_BLOCK.match(text)
@@ -407,7 +422,7 @@ def strip_host_context(prompt: str) -> str:
         stripped = True
     if stripped:
         text = _REQUEST_HEADING.sub("", text, count=1)
-    return text
+    return _TRAILING_ATTACHMENTS.sub("", text)
 
 
 def undecorate(prompt: str) -> str:
