@@ -16,6 +16,17 @@ All notable changes to Agent Landing are recorded here.
   `leave|spend <percent> [task]`.
 - Under a budget, the agent does the most valuable part of the task first.
 
+### Fixed
+
+- An agent can now mark its task complete. The gate used to deny the
+  `landing complete` it was told to run, and the command had no conversation to
+  act on, so a task that finished early kept its budget armed until
+  `/landing cancel`. The `PreToolUse` hook now completes that conversation's
+  budget itself and freezes the rest of the turn. Only the bare command counts,
+  and only before the boundary; anything chained to it is still denied.
+- `landing status` (and `--compact`) in a terminal shows every live budget,
+  including those opened from a chat, instead of only the default one.
+
 ### Removed
 
 - `landing start --handoff`.
@@ -33,10 +44,6 @@ All notable changes to Agent Landing are recorded here.
 ### Known issues
 
 - The final-reply handoff saved by the `Stop` hook is not yet verified on a live host.
-- The gate denies the agent's own `landing complete`, so a task that finishes
-  early keeps its budget armed in that conversation until `/landing cancel`.
-- `landing status` run in a terminal reads only the default budget, not budgets
-  opened from a chat, which are tracked per conversation.
 
 ## [0.1.0a1] - 2026-08-29
 

@@ -224,6 +224,11 @@ is a per-window delta.
 
 ## A budget belongs to one task
 
+An agent ends its task with `landing complete`, which `pre_tool()` handles
+itself rather than letting the command run: the hook has the payload's
+`session_id`, and the CLI would act on the terminal's `default` budget. It
+accepts only the bare command, in `NORMAL` or `CONSERVE`; anything chained to it
+is still a release and denied, and in `LAND` the handoff is still due.
 `task_complete` remains guarded for the rest of the current agent turn, preventing
 the model from declaring completion and continuing to spend. The next
 `UserPromptSubmit` changes it to `completed_released`, an inactive state for which
@@ -245,6 +250,10 @@ cancel`, which only a real user prompt can perform. This is deliberately not a
 `--force` flag: CLI convention would offer one, but a flag is something the
 agent can type, which is exactly what must not work. POSIX rlimits resolve the
 same tension the same way -- the limit ratchets, and going back needs privilege.
+
+`complete` is not an exception to the ratchet. It does not lower the floor; it
+stops all spending for the rest of the turn, and the budget is released only by
+the user's next prompt.
 
 Burn samples carry across budgets. Discarding them reset the landing reserve
 from a measured value to the 4% default, biasing the reserve downwards -- the

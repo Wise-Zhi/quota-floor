@@ -44,12 +44,14 @@ floor. A new Landing command starts a fresh task budget, while account-level
 quota snapshots and measured burn history remain shared so reserve estimates do
 not reset.
 
-**Known gap (alpha):** the gate denies `complete` along with every other
-command that releases the guard, so an agent cannot currently mark its own task
-complete, although the budget prompt asks it to. The budget stays armed in
-that conversation until `/landing cancel`. This errs on the guarded side: the
-floor still holds, and nothing is spent to reach it. But a later task in the
-same chat inherits the floor.
+The agent's `landing complete` never actually runs. The gate intercepts it and
+completes the conversation's own budget, because only the hook knows which
+conversation is asking; the command run from a terminal would act on the
+terminal's budget instead. The agent sees a denial whose reason confirms the
+completion. Completing is the one release an agent may perform, because it ends
+spending rather than lifting the floor. It counts only as the bare command,
+with nothing chained to it, and only before the landing boundary: past it the
+task is out of budget rather than finished, and the handoff is still due.
 
 To end an active budget early, send `/landing cancel` (Codex: `$landing cancel`) as a whole message. The guard stands down, and the session is kept on disk so its burn history remains useful to the next budget.
 

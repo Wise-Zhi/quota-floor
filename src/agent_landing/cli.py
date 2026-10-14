@@ -13,6 +13,7 @@ from .dashboard import serve_dashboard
 from .handoff import write_fallback_handoff
 from .hooks import (
     cancel_session,
+    complete_session,
     evaluate_current,
     gate_failure,
     post_tool,
@@ -433,8 +434,8 @@ def _compact_status_line(session: TaskSession, decision, runway) -> str:
 
 def cmd_status(args: argparse.Namespace) -> int:
     store = _store(args)
-    current = evaluate_current(store)
-    if not current:
+    live = _live_budgets(args, store)
+    if not live:
         # A cancelled session is deliberately invisible to the gate, but the user
         # asking for status deserves to be told the guard is standing down rather
         # than that nothing exists.
@@ -463,18 +464,53 @@ def cmd_status(args: argparse.Namespace) -> int:
             return 0
         print("No active task with a usable quota snapshot.")
         return 1
-    session, decision = current
-    runway = estimate_runway(session, decision, store.load_history())
+    reports = [_status_report(store, session, decision, compact=getattr(args, "compact", False))
+               for store, session, decision in live]
     if getattr(args, "compact", False):
-        print(_compact_status_line(session, decision, runway))
+        for (chat, _, _), line in zip(live, reports):
+            # Several chats can be guarded at once; say which line is which.
+            print(line + (f" | chat {chat.session_key[:8]}" if len(live) > 1 else ""))
         return 0
+    print(json.dumps(reports[0] if len(reports) == 1 else reports, indent=2))
+    return 0
+
+
+def _live_budgets(args: argparse.Namespace, store: StateStore):
+    """Every budget still guarding: the terminal's own, then each conversation's.
+
+    A terminal has no conversation, so `status` cannot know which chat the user
+    means -- and budgets opened by the hooks live under the chat's `session_id`,
+    never under `default`. Reading only `default` reported "No active task"
+    while a chat was being guarded, so every live budget is shown instead, the
+    same scope `cancel` acts on.
+    """
+    live = []
+    current = evaluate_current(store)
+    if current:
+        live.append((store, *current))
+    for key, candidate in store.iter_sessions():
+        if key == store.session_key or candidate.is_inactive:
+            continue
+        chat = _store(args, {"session_id": key})
+        with chat.lock():
+            found = evaluate_current(chat)
+        if found:
+            live.append((chat, *found))
+    return live
+
+
+def _status_report(store: StateStore, session: TaskSession, decision, *, compact: bool):
+    runway = estimate_runway(session, decision, store.load_history())
+    if compact:
+        return _compact_status_line(session, decision, runway)
     snapshot = store.load_snapshot()
     other_windows = {
         w.id: round(w.remaining_percent, 2)
         for w in (snapshot.windows if snapshot else [])
         if w.id != session.window
     }
-    payload = {
+    return {
+        "session": store.session_key,
         "task": session.task,
         "provider": session.provider,
         "window": session.window,
@@ -496,24 +532,20 @@ def cmd_status(args: argparse.Namespace) -> int:
         "runway": runway.to_dict(),
         "handoff": session.handoff_path or None,
     }
-    print(json.dumps(payload, indent=2))
-    return 0
 
 
 def cmd_complete(args: argparse.Namespace) -> int:
+    """Complete the terminal's own budget.
+
+    An agent in a chat never reaches this: the PreToolUse gate intercepts the
+    command and completes that conversation's budget itself, because only the
+    hook knows which conversation is asking.
+    """
     store = _store(args)
     session = store.load_session()
     if not session:
         raise SystemExit("No active quota-budgeted task.")
-    snapshot = store.load_snapshot()
-    remaining = None
-    if snapshot and snapshot.provider == session.provider:
-        window = snapshot.window(session.window)
-        if window:
-            remaining = window.remaining_percent
-    session.state = LandingState.STOPPED
-    session.stop_reason = "task_complete"
-    session.completed_at_remaining_percent = remaining
+    remaining = complete_session(session, store.load_snapshot())
     store.save_session(session)
     print(json.dumps({
         "state": "stopped",
@@ -527,6 +559,7 @@ def cmd_complete(args: argparse.Namespace) -> int:
         ),
     }, indent=2))
     return 0
+
 
 def cmd_cancel(args: argparse.Namespace) -> int:
     """End the budget contract entirely and stand the guard down."""

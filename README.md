@@ -149,12 +149,6 @@ The full record, with the evidence for each claim, is in
   in `/usage` may not reach the status line.
 - Codex has no `$landing` autocomplete, because Landing intentionally installs no Codex
   skill ([why](docs/VERIFICATION.md#codex-gets-no-skill-on-purpose)).
-- A task that finishes early leaves its budget armed in that conversation
-  until `/landing cancel`: the gate denies the agent's own `landing complete`.
-  The floor is still a limit, and leftover quota is never spent to reach it.
-  But the next task in the same chat inherits the floor.
-- `landing status` in a terminal does not yet show budgets opened from a chat,
-  since budgets are now tracked per conversation. The status line does.
 
 ## Documentation
 

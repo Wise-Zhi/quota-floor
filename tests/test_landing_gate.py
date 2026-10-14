@@ -161,7 +161,10 @@ def test_unbalanced_quoting_is_refused_rather_than_guessed_at():
 @pytest.mark.parametrize("command", [
     "landing cancel",
     "python -m agent_landing.cli cancel",
-    "landing complete",
+    # A bare `landing complete` is allowed to end the task (it freezes the turn;
+    # see test_complete_and_status.py); anything riding along with it is not.
+    "landing complete && landing cancel",
+    "landing complete --force",
     "landing resume",
     "landing start --leave 5 --task x",
 ])

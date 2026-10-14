@@ -288,7 +288,8 @@ def pre_tool(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
 
 
 #: Landing subcommands that weaken or end the contract. An agent may read state
-#: freely; it may not release itself.
+#: freely; it may not release itself. The one exception, a bare `complete`, is
+#: answered by `is_complete_command` before this list is consulted.
 _RELEASING_SUBCOMMANDS = ("cancel", "complete", "resume", "start", "invoke", "uninstall")
 
 
@@ -303,6 +304,56 @@ def _releases_the_guard(payload: dict[str, Any]) -> bool:
     return any(re.search(rf"\b{verb}\b", command) for verb in _RELEASING_SUBCOMMANDS)
 
 
+def is_complete_command(payload: dict[str, Any]) -> bool:
+    """Is this tool call exactly `landing complete`, with nothing riding along?
+
+    Matched strictly, like the LAND allowlist: no shell control characters and no
+    further arguments, so `landing complete && <anything>` stays a release and is
+    denied. Only the trailing tokens are compared, because the interpreter path
+    in front of `-m agent_landing.cli` differs per machine.
+    """
+    if _tool_name(payload) not in {"Bash", "shell", "exec_command"}:
+        return False
+    tool_input = _tool_input(payload)
+    command = str(tool_input.get("command") or tool_input.get("cmd") or "").strip()
+    if not command or _SHELL_CONTROL.search(command):
+        return False
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    if len(tokens) == 4 and tokens[1:] == ["-m", "agent_landing.cli", "complete"]:
+        return True
+    if len(tokens) == 2 and tokens[1] == "complete":
+        name = re.split(r"[\\/]", tokens[0])[-1].casefold()
+        return name in {"landing", "landing.exe", "agent-landing", "agent-landing.exe"}
+    return False
+
+
+def complete_session(session: TaskSession, snapshot: QuotaSnapshot | None) -> float | None:
+    """Mark the task finished. The rest of the turn is frozen; the next prompt releases it."""
+    remaining = None
+    if snapshot and snapshot.provider == session.provider:
+        window = snapshot.window(session.window)
+        if window:
+            remaining = window.remaining_percent
+    session.state = LandingState.STOPPED
+    session.stop_reason = "task_complete"
+    session.completed_at_remaining_percent = remaining
+    return remaining
+
+
+#: The reply to an intercepted `landing complete`. It is delivered as a denial
+#: because the guard has already done the work; the reason says so, or the model
+#: would read the denial as a failure and retry.
+COMPLETED_REASON = (
+    "Quota guard: task recorded as complete, and this conversation's budget is closed. "
+    "The guard handled the command itself, so it did not need to run; this is the expected "
+    "response, not an error. Give your final reply now and stop: tool use stays blocked "
+    "until the user's next message, which releases the budget."
+)
+
+
 def _pre_tool_locked(payload: dict[str, Any], store: StateStore) -> dict[str, Any]:
     # Deliberately does NOT renew a completed segment: a tool call cannot prove a
     # new user instruction, so renewing here would let the agent work straight
@@ -315,6 +366,17 @@ def _pre_tool_locked(payload: dict[str, Any], store: StateStore) -> dict[str, An
     if not current:
         return {}
     session, decision = current
+
+    # Completion is the one release an agent may perform, because it lowers the
+    # spend to zero rather than lifting the floor: it freezes the rest of the
+    # turn. It is handled here, not by letting the command run, because the hook
+    # knows which conversation's budget this is and a terminal command does not.
+    # Past the boundary the task is out of budget, not finished, so the call
+    # falls through and the landing instructions (and handoff) still apply.
+    if decision.state in (LandingState.NORMAL, LandingState.CONSERVE) and is_complete_command(payload):
+        complete_session(session, store.load_snapshot())
+        store.save_session(session)
+        return hook_json(decision="deny", reason=COMPLETED_REASON)
 
     # Checked in every state, not only past the boundary. The gate guards the
     # *floor*, but standing the guard down is not a spend -- an agent that can
@@ -550,8 +612,9 @@ def _open_budget_from_prompt(
         f"Quota guard: a budget is already active for this instruction -- {result['interpretation']} "
         "It was established before this turn began; do not run any landing command to set it up, "
         "and do not describe the guard, the budget, or this setup to the user -- in particular do not open by naming a skill or workflow you are applying. "
-        f"When the task is finished, run `{landing_command('complete')}` to stop; that exact "
-        "command works here, whereas a bare `landing` may not be on PATH. "
+        f"When the task is finished, run `{landing_command('complete')}` on its own to stop; "
+        "the guard answers it directly (as a denial that confirms completion), and a bare "
+        "`landing` may not be on PATH. "
         # Codex ships no skill, so this is its only copy of the ordering rule.
         "Do the most important part of the task that is useful on its own first, and leave each "
         "part finished before starting the next, so that if the guard lands midway the finished "
