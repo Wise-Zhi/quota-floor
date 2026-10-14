@@ -12,8 +12,7 @@ reserve so the agent has room to write the handoff, and blocks every write once
 it hits that reserve. If the task finishes at 91%, it stops at 91%. **The floor is a limit, never a spending target.**
 
 > **Alpha.** Windows is the only platform verified on real hosts, and only on the host builds listed under
-> [Verification status](#verification-status). The new final-reply handoff
-> is covered by tests but **not yet verified live** on either host.
+> [Verification status](#verification-status).
 
 ## Install
 
@@ -23,7 +22,8 @@ landing install
 landing doctor
 ```
 
-Until the PyPI release exists, run `pipx install .` from a clone instead of the first line.
+Until the PyPI release exists, install from GitHub instead of the first line:
+`pipx install git+https://github.com/zhixun123/landing`.
 `landing install` configures Claude Code and Codex for your user account, not
 for one project. It keeps your existing settings, and `landing uninstall`
 reverses it. Details: [docs/INSTALLATION.md](docs/INSTALLATION.md).
@@ -75,9 +75,11 @@ A scripted, zero-quota walkthrough of this flow is in [docs/DEMO.md](docs/DEMO.m
   refused, so a dropped keyword can never be read as the opposite request.
 - The task is optional. `/landing spend 20` on its own puts a floor under the
   work already in progress.
-- The floor applies to **every** quota window your plan reports (five-hour and
-  weekly) and triggers on whichever window reaches it first. Add `weekly` or
-  `5h` to guard only that window, e.g. `/landing leave weekly 70 fix the tests`.
+- `leave` applies to **every** quota window your plan reports (five-hour and
+  weekly) and triggers on whichever window reaches it first. `spend` is
+  measured on the five-hour window. Add `weekly` or `5h` to choose the window
+  yourself, e.g. `/landing leave weekly 70 fix the tests`.
+- A budget lasts one task: it ends by itself when the agent's turn ends.
 - Plain phrasing works too: `/landing leave me 70% quota`,
   `/landing spend at most 15% on this`, `/landing 留 70 修测试`. A qualifier
   that contradicts the keyword (`leave at most 30`) is refused, not guessed.
@@ -127,9 +129,12 @@ runway, handoff contract) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 | **Claude Code** | only where the status line runs (terminal CLI) | **verified** 2026-08-27 on Windows: a blocked write did not run |
 | **Codex** | **verified** on codex-cli 0.150.0-alpha.12.2 | **verified** 2026-08-29 on Windows: implementation patches were denied in LAND |
 
-- The handoff is now the agent's final reply, saved by a `Stop` hook. That
-  path is covered by tests but **not yet verified live** on either host. The
-  live runs above used the earlier handoff design, which wrote a file.
+- 2026-10-15, current design: on Codex (ChatGPT desktop, cli 0.162.0-alpha.17.2)
+  LAND denied writes and the `Stop` hook saved the final-reply handoff. On
+  both Codex and Claude Code (terminal CLI 2.1.211), a `spend 15` budget
+  opened on its own conversation, the task finished early, and the budget
+  ended with the turn. Claude Code has not yet been driven into LAND under
+  this design.
 - Enforcement depends on how each host version handles hook denials. After
   upgrading Codex, rerun the integration check before trusting it.
 - Some Claude Code surfaces never run the status line. There, Landing cannot
@@ -146,7 +151,9 @@ The full record, with the evidence for each claim, is in
   have not been checked against real hosts.
 - Claude Code: subscription accounts only (API-key sessions expose no quota),
   and only surfaces that run the status line. Model-scoped weekly limits shown
-  in `/usage` may not reach the status line.
+  in `/usage` may not reach the status line. Claude Code reports quota only
+  after its first reply, so in a fresh conversation send any message before
+  `/landing`.
 - Codex has no `$landing` autocomplete, because Landing intentionally installs no Codex
   skill ([why](docs/VERIFICATION.md#codex-gets-no-skill-on-purpose)).
 

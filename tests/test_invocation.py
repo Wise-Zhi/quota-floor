@@ -190,6 +190,8 @@ def test_every_example_in_the_docs_actually_parses():
             # the tail turned a valid documented example into `spend 20`, which
             # is correctly refused for having no task.
             for span in re.findall(r"`([^`]*[/$]landing[^`]*)`", line):
+                if "://" in span:
+                    continue  # a URL such as the repository's, not an invocation
                 extracted = extract_invocation(span)
                 if extracted is None:
                     continue
