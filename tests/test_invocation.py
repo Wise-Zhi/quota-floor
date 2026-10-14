@@ -176,6 +176,7 @@ def test_every_example_in_the_docs_actually_parses():
         Path("src/agent_landing/assets/claude/landing/SKILL.md"),
         Path(".claude/skills/landing/SKILL.md"),
         Path("README.md"),
+        Path("README.zh-CN.md"),
     ]
     for path in roots:
         assert path.exists(), f"documentation root disappeared: {path}"

@@ -1,5 +1,7 @@
 # Agent Landing
 
+**English** | [简体中文](README.zh-CN.md)
+
 **Tell Claude Code or Codex how much of your subscription quota to leave untouched. When quota gets close to that floor, Landing blocks further edits, and the agent writes a handoff and stops.**
 
 ```text
@@ -17,13 +19,11 @@ it hits that reserve. If the task finishes at 91%, it stops at 91%. **The floor 
 ## Install
 
 ```bash
-pipx install agent-landing
+pipx install git+https://github.com/zhixun123/landing
 landing install
 landing doctor
 ```
 
-Until the PyPI release exists, install from GitHub instead of the first line:
-`pipx install git+https://github.com/zhixun123/landing`.
 `landing install` configures Claude Code and Codex for your user account, not
 for one project. It keeps your existing settings, and `landing uninstall`
 reverses it. Details: [docs/INSTALLATION.md](docs/INSTALLATION.md).
