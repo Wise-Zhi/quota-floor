@@ -69,3 +69,15 @@ def test_doctor_flags_an_install_bash_would_break(tmp_path, monkeypatch):
     check = next(c for c in doctor_host("claude", home=tmp_path, live=False)["checks"] if c["name"] == "bash_safe_paths")
     assert check["status"] == "error"
     assert "landing install" in check["detail"]
+
+
+def test_a_claude_refusal_without_quota_says_how_to_get_some(tmp_path):
+    """Claude Code hands quota to the status line only after its first reply, so
+    `/landing` as a conversation's first message always finds none. Observed
+    2026-10-15 on 2.1.211. Without this hint the refusal reads as a broken install."""
+    from agent_landing.hooks import user_prompt
+    from agent_landing.state import StateStore
+
+    result = user_prompt({"prompt": "/landing spend 15 x", "session_id": "s", "cwd": str(tmp_path)},
+                         StateStore(tmp_path, session_id="s"), provider="claude")
+    assert "send any ordinary message first" in json.dumps(result)

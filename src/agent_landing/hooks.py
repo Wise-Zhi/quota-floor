@@ -774,7 +774,12 @@ def _open_budget_from_prompt(
         return _refuse(store, (
             f"Could not start a quota budget: no {provider} quota reading is available yet, so "
             "there is nothing to budget against. Nothing was started, and the task was not run. "
-            "Retry once quota has been read, or run `landing status` to see why it is missing."
+            + (
+                "Claude Code reports quota to the status line only after its first reply in a "
+                "conversation: send any ordinary message first, then repeat the command."
+                if provider == "claude"
+                else "Retry once quota has been read, or run `landing status` to see why it is missing."
+            )
         ))
     try:
         with store.lock():
