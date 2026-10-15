@@ -10,6 +10,7 @@ and the Stop hook would have saved a garbled handoff.
 
 import io
 import json
+import locale
 import sys
 
 import pytest
@@ -43,6 +44,8 @@ def test_a_payload_in_the_local_code_page_still_reads(monkeypatch):
     """Not what hosts send, but better read than refused."""
     data = json.dumps({"prompt": "한국어"}, ensure_ascii=False).encode("cp949")
     monkeypatch.setattr(sys, "stdin", _stdin(data))
+    # The machine this was seen on runs cp949; CI runners do not.
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=True: "cp949")
     assert read_hook_payload() == {"prompt": "한국어"}
 
 

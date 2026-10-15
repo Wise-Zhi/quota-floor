@@ -393,6 +393,17 @@ def test_install_adopts_an_identical_manual_skill_copy(tmp_path):
     assert (skill / ".landing-install.json").is_file()
 
 
+def test_doctor_accepts_a_runtime_reached_through_a_symlink(tmp_path, monkeypatch):
+    """On macOS and Linux a virtualenv's python is a symlink to the base
+    interpreter. The installer writes the link; the doctor used to compare only
+    the resolved target, so every POSIX install was reported as stale."""
+    install_host("claude", home=tmp_path, python_executable=sys.executable, os_name=os.name)
+    monkeypatch.setattr(os.path, "realpath", lambda path, *a, **k: "/opt/python/3.12/bin/python3.12")
+
+    checks = {c["name"]: c for c in doctor_host("claude", home=tmp_path, live=False)["checks"]}
+    assert checks["hook_runtime"]["status"] == "ok"
+
+
 def test_doctor_reports_complete_static_install(tmp_path):
     install_host("claude", home=tmp_path, python_executable=sys.executable, os_name=os.name)
 

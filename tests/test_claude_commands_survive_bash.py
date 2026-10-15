@@ -55,7 +55,8 @@ def test_the_installed_commands_actually_run_under_bash(tmp_path):
         assert b"command not found" not in result.stderr
 
 
-def test_doctor_flags_an_install_bash_would_break(tmp_path, monkeypatch):
+@pytest.mark.skipif(os.name != "nt", reason="the check exists only on Windows, where Claude Code uses Git Bash")
+def test_doctor_flags_an_install_bash_would_break(tmp_path):
     install_host("claude", home=tmp_path, python_executable=sys.executable, os_name="nt")
     settings = tmp_path / ".claude" / "settings.json"
     config = json.loads(settings.read_text(encoding="utf-8"))
@@ -64,7 +65,6 @@ def test_doctor_flags_an_install_bash_would_break(tmp_path, monkeypatch):
             for hook in group["hooks"]:
                 hook["command"] = hook["command"].replace("/", "\\", 3)
     settings.write_text(json.dumps(config), encoding="utf-8")
-    monkeypatch.setattr(os, "name", "nt")
 
     check = next(c for c in doctor_host("claude", home=tmp_path, live=False)["checks"] if c["name"] == "bash_safe_paths")
     assert check["status"] == "error"

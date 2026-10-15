@@ -790,9 +790,15 @@ def doctor_host(
                     if broken else "hook commands survive Git Bash"
                 ),
             })
-        current_runtime = str(Path(sys.executable).resolve()).replace("\\", "/").casefold()
+        # The installer writes `sys.executable` as it is. On macOS and Linux a
+        # virtualenv's `python` is a symlink, so comparing only the resolved path
+        # called every POSIX install stale. Either spelling names this runtime.
+        runtimes = {
+            os.path.normcase(path).replace("\\", "/").casefold()
+            for path in (os.path.abspath(sys.executable), os.path.realpath(sys.executable))
+        }
         runtime_current = bool(configured_commands) and all(
-            current_runtime in command.replace("\\", "/").casefold()
+            any(runtime in command.replace("\\", "/").casefold() for runtime in runtimes)
             for command in configured_commands
         )
         checks.append({
