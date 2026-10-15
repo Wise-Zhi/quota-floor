@@ -30,7 +30,7 @@ body:
     id: landing-version
     attributes:
       label: Quota Floor version and OS
-      placeholder: "0.1.0a1, Windows 11"
+      placeholder: "0.1.0a2, Windows 11"
     validations:
       required: true
   - type: dropdown

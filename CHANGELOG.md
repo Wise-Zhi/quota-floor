@@ -2,7 +2,17 @@
 
 All notable changes to Quota Floor are recorded here.
 
-## [Unreleased]
+## [0.1.0a2] - 2026-10-15
+
+### Fixed
+
+- `landing doctor` no longer reports `hook_runtime` as an error on macOS and
+  Linux. A virtualenv's `python` there is a symlink; the doctor compared only
+  the resolved path, so every POSIX install looked stale.
+
+## [0.1.0a1] - 2026-10-15
+
+First release on PyPI, as `quota-floor`. It contains everything below.
 
 ### Changed
 
@@ -49,7 +59,7 @@ All notable changes to Quota Floor are recorded here.
 
 - The final-reply handoff saved by the `Stop` hook is not yet verified on a live host.
 
-## [0.1.0a1] - 2026-08-29
+## [0.1.0-alpha] - 2026-08-29 (baseline, not published)
 
 First public alpha candidate.
 

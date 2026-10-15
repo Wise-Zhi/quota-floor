@@ -3,7 +3,7 @@ name: landing
 description: 'Run a coding task under an account-quota budget with a hard floor on what must remain. Use when the user asks to "leave me 70% quota", "spend at most 15% on this", "留 70", or otherwise caps how much quota a task may use. Example: `/landing leave 70 fix the tests` stops while at least 70% remains; `/landing spend 20 fix the tests` spends at most 20 percentage points.'
 argument-hint: 'leave|spend <percent> [task]'
 allowed-tools: Bash(landing *)
-version: 0.1.0a1
+version: 0.1.0a2
 ---
 
 The quota budget for this instruction is normally **already open**. A

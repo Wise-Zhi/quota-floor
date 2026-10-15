@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quota-floor"
-version = "0.1.0a1"
+version = "0.1.0a2"
 description = "Quota-budgeted graceful landing for coding agents."
 readme = "README.md"
 requires-python = ">=3.10"
