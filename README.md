@@ -19,7 +19,7 @@ it hits that reserve. If the task finishes at 91%, it stops at 91%. **The floor 
 ## Install
 
 ```bash
-pipx install git+https://github.com/Wise-Zhi/quota-floor
+pipx install quota-floor
 landing install
 landing doctor
 ```

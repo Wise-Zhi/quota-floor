@@ -6,19 +6,14 @@ only the Landing skill directories and Landing hook entries.
 
 ## Install
 
-From a cloned or downloaded checkout:
-
-```bash
-pipx install .
-landing install
-```
-
-Once published, the same environment can be created from PyPI instead of a
-checkout:
+From PyPI:
 
 ```bash
 pipx install quota-floor
+landing install
 ```
+
+From a cloned or downloaded checkout, use `pipx install .` for the first line.
 
 The distribution is `quota-floor`; the command it installs is `landing`.
 

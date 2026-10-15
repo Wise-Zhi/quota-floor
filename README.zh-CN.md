@@ -16,7 +16,7 @@
 ## 安装
 
 ```bash
-pipx install git+https://github.com/Wise-Zhi/quota-floor
+pipx install quota-floor
 landing install
 landing doctor
 ```
