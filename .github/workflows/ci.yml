@@ -23,7 +23,18 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[test]"
-      - run: python -m pytest -q
+      - name: pytest
+        shell: bash
+        # Failures also go out as annotations, which the public API serves
+        # without signing in; the step log does not.
+        run: |
+          set +e
+          python -m pytest -q -rfE --tb=short 2>&1 | tee pytest.log
+          status=${PIPESTATUS[0]}
+          grep -E '^(FAILED|ERROR) ' pytest.log | head -30 | while IFS= read -r line; do
+            echo "::error title=pytest::${line}"
+          done
+          exit "$status"
       - run: python -m compileall -q src
 
   package:
